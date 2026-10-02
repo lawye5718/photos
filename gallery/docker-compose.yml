@@ -21,6 +21,9 @@ services:
       LSKY_APP_URL: https://pic.damingxing.vip
       LSKY_UPLOAD_SUBDIR: app/uploads
       TOKEN_TTL: "604800"          # 长期口令签发的 token 有效期（7 天）
+      # webhook 接收密钥（失败关闭）：调用方须在请求头 X-Gallery-Webhook-Key
+      # 或 URL 参数 ?key= 携带相同值，否则 503/401 拒绝（修复「任何人可上传」）。
+      LSKY_WEBHOOK_SECRET: "JozEBoB_gkFADA1t8TFPBshY3L0eVzBGL7cpJovNp68"
 
     volumes:
       - ./data:/app/data

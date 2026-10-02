@@ -697,16 +697,17 @@ def admin_sync(payload: dict = Depends(require_full)):
 
 
 # ------------------------- Lsky Pro Webhook ------------------------------ #
-# 在 Lsky 后台「Webhook」配置：事件选「上传成功」，URL 指向本接口。
-# 若设置了环境变量 LSKY_WEBHOOK_SECRET，则要求请求头 X-Gallery-Webhook-Key 与之相等；
-# 未设置时接口开放（仅建议在内网/隧道已鉴权场景下使用）。
+# 失败关闭：必须设置环境变量 LSKY_WEBHOOK_SECRET 才能接收；调用方在请求头
+# X-Gallery-Webhook-Key 或 URL 参数 ?key= 中携带相同密钥。未配置密钥时接口
+# 直接拒绝（503），避免任何人知道 URL 就能向展馆灌入媒体（"任何人可上传"漏洞）。
 @app.post("/api/webhook/lsky")
 async def lsky_webhook(request: Request):
     secret = os.environ.get("LSKY_WEBHOOK_SECRET")
-    if secret:
-        key = request.headers.get("X-Gallery-Webhook-Key", "")
-        if not hmac.compare_digest(key, secret):
-            raise HTTPException(status_code=401, detail="无效的 webhook 密钥")
+    if not secret:
+        raise HTTPException(status_code=503, detail="webhook 未配置密钥（LSKY_WEBHOOK_SECRET），已拒绝接收")
+    provided = request.headers.get("X-Gallery-Webhook-Key", "") or (request.query_params.get("key") or "")
+    if not hmac.compare_digest(provided, secret):
+        raise HTTPException(status_code=401, detail="无效的 webhook 密钥")
 
     try:
         payload = await request.json()
