@@ -30,6 +30,7 @@ import hmac
 import json
 import mimetypes
 import os
+import re
 import secrets
 import sqlite3
 import sys
@@ -115,10 +116,24 @@ def db():
         conn.close()
 
 
+def migrate_db() -> None:
+    """存量库补齐新列（tags / visibility），幂等。"""
+    with db() as conn:
+        cols = {r[1] for r in conn.execute("PRAGMA table_info(media)")}
+        if "tags" not in cols:
+            conn.execute("ALTER TABLE media ADD COLUMN tags TEXT DEFAULT ''")
+        if "visibility" not in cols:
+            conn.execute(
+                "ALTER TABLE media ADD COLUMN visibility TEXT DEFAULT 'public' "
+                "CHECK(visibility IN ('public', 'private'))"
+            )
+
+
 def init_db() -> None:
     with db() as conn:
         conn.execute("PRAGMA journal_mode=WAL")
         conn.executescript(SCHEMA)
+    migrate_db()
     if not get_setting("jwt_secret"):
         set_setting("jwt_secret", secrets.token_urlsafe(48))
 
@@ -210,6 +225,8 @@ class MediaPatch(BaseModel):
     title: Optional[str] = None
     category: Optional[str] = None
     is_featured: Optional[int] = None
+    tags: Optional[str] = None
+    visibility: Optional[str] = None
 
 
 class MediaCreate(BaseModel):
@@ -219,6 +236,8 @@ class MediaCreate(BaseModel):
     thumbnail: Optional[str] = None
     category: str = "other"
     is_featured: int = 0
+    tags: Optional[str] = None
+    visibility: str = "public"
 
 
 # --------------------------------------------------------------------------- #
@@ -246,6 +265,8 @@ def _row_to_item(row: sqlite3.Row, scope: str) -> dict:
         "thumbnail": thumb,
         "category": row["category"],
         "is_featured": row["is_featured"],
+        "tags": row["tags"] or "",
+        "visibility": row["visibility"] or ("private" if is_private else "public"),
         "width": row["width"],
         "height": row["height"],
         "created_at": row["created_at"],
@@ -404,21 +425,34 @@ def media_thumb(media_id: int, payload: dict = Depends(require_token)):
 @app.patch("/api/admin/media/{media_id}")
 def admin_patch(media_id: int, patch: MediaPatch, payload: dict = Depends(require_full)):
     sets, params = [], []
-    if patch.title is not None:
-        sets.append("title = ?"); params.append(patch.title)
-    if patch.category is not None:
-        if patch.category not in CATEGORIES:
-            raise HTTPException(status_code=400, detail="分类必须是 ai/me/other/private")
-        sets.append("category = ?"); params.append(patch.category)
-    if patch.is_featured is not None:
-        sets.append("is_featured = ?"); params.append(1 if patch.is_featured else 0)
-    if not sets:
-        raise HTTPException(status_code=400, detail="没有需要更新的字段")
-    params.append(media_id)
     with db() as conn:
-        cur = conn.execute("UPDATE media SET " + ", ".join(sets) + " WHERE id = ?", params)
-        if cur.rowcount == 0:
+        row = conn.execute("SELECT category FROM media WHERE id = ?", (media_id,)).fetchone()
+        if not row:
             raise HTTPException(status_code=404, detail="资源不存在")
+        current_cat = row["category"]
+        if patch.title is not None:
+            sets.append("title = ?"); params.append(patch.title)
+        if patch.category is not None:
+            if patch.category not in CATEGORIES:
+                raise HTTPException(status_code=400, detail="分类必须是 ai/me/other/private")
+            sets.append("category = ?"); params.append(patch.category)
+        if patch.visibility is not None:
+            if patch.visibility not in ("public", "private"):
+                raise HTTPException(status_code=400, detail="权限必须是 public/private")
+            # 与分类保持同步：私密权限 -> 归入 private 分类；公开权限若原为 private 则退回 other
+            if patch.visibility == "private" and patch.category is None:
+                sets.append("category = 'private'")
+            elif patch.visibility == "public" and current_cat == "private" and patch.category is None:
+                sets.append("category = 'other'")
+            sets.append("visibility = ?"); params.append(patch.visibility)
+        if patch.tags is not None:
+            sets.append("tags = ?"); params.append(patch.tags)
+        if patch.is_featured is not None:
+            sets.append("is_featured = ?"); params.append(1 if patch.is_featured else 0)
+        if not sets:
+            raise HTTPException(status_code=400, detail="没有需要更新的字段")
+        params.append(media_id)
+        conn.execute("UPDATE media SET " + ", ".join(sets) + " WHERE id = ?", params)
     return {"code": 200, "message": "已更新"}
 
 
@@ -426,12 +460,15 @@ def admin_patch(media_id: int, patch: MediaPatch, payload: dict = Depends(requir
 def admin_create(item: MediaCreate, payload: dict = Depends(require_full)):
     if item.category not in CATEGORIES:
         raise HTTPException(status_code=400, detail="分类必须是 ai/me/other/private")
+    visibility = item.visibility if item.visibility in ("public", "private") else (
+        "private" if item.category == "private" else "public"
+    )
     with db() as conn:
         cur = conn.execute(
-            "INSERT INTO media(title, type, url, thumbnail, category, is_featured, source) "
-            "VALUES(?,?,?,?,?,?, 'manual')",
+            "INSERT INTO media(title, type, url, thumbnail, category, is_featured, tags, visibility, source) "
+            "VALUES(?,?,?,?,?,?,?,?, 'manual')",
             (item.title, item.type, item.url, item.thumbnail or item.url, item.category,
-             1 if item.is_featured else 0),
+             1 if item.is_featured else 0, item.tags or "", visibility),
         )
         new_id = cur.lastrowid
     return {"code": 200, "id": new_id}
@@ -448,6 +485,61 @@ def admin_delete(media_id: int, payload: dict = Depends(require_full)):
 def admin_sync(payload: dict = Depends(require_full)):
     added, skipped = sync_from_lsky()
     return {"code": 200, "added": added, "skipped": skipped}
+
+
+# ------------------------- Lsky Pro Webhook ------------------------------ #
+# 在 Lsky 后台「Webhook」配置：事件选「上传成功」，URL 指向本接口。
+# 若设置了环境变量 LSKY_WEBHOOK_SECRET，则要求请求头 X-Gallery-Webhook-Key 与之相等；
+# 未设置时接口开放（仅建议在内网/隧道已鉴权场景下使用）。
+@app.post("/api/webhook/lsky")
+async def lsky_webhook(request: Request):
+    secret = os.environ.get("LSKY_WEBHOOK_SECRET")
+    if secret:
+        key = request.headers.get("X-Gallery-Webhook-Key", "")
+        if not hmac.compare_digest(key, secret):
+            raise HTTPException(status_code=401, detail="无效的 webhook 密钥")
+
+    try:
+        payload = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="请求体不是合法 JSON")
+
+    if not isinstance(payload, dict):
+        raise HTTPException(status_code=400, detail="请求体格式错误")
+
+    # 兼容 {data:[...]} 与单对象两种形态
+    items = payload.get("data")
+    if not isinstance(items, list):
+        items = [payload] if isinstance(payload.get("url") or (payload.get("links", {}) or {}).get("url"), str) else []
+
+    added = skipped = 0
+    with db() as conn:
+        for it in items:
+            if not isinstance(it, dict):
+                continue
+            links = it.get("links", {}) or {}
+            url = links.get("url") or it.get("url")
+            if not url or not isinstance(url, str):
+                continue
+            thumb = links.get("thumbnail_url") or it.get("thumbnail_url") or it.get("thumbnail") or url
+            media_type = "video" if url.lower().endswith((".mp4", ".mov", ".webm", ".m4v")) else "image"
+
+            # 从直链 /i/<path> 反推 Lsky 相对路径，作为去重键（与 sync 一致）
+            m = re.search(r"/i/(.+?)(?:\?.*)?$", url)
+            sid = m.group(1) if m else None
+            if sid:
+                if conn.execute("SELECT 1 FROM media WHERE source_id = ?", (sid,)).fetchone():
+                    skipped += 1
+                    continue
+
+            title = it.get("name") or it.get("origin_name") or it.get("alias_name") or "新上传素材"
+            conn.execute(
+                "INSERT INTO media(title, type, url, thumbnail, category, visibility, tags, is_featured, source, source_id) "
+                "VALUES(?,?,?,?,?,?,?,?,?,?)",
+                (title, media_type, url, thumb, "other", "public", "", 0, "webhook", sid),
+            )
+            added += 1
+    return {"status": "success", "added": added, "skipped": skipped}
 
 
 # --------------------------- Lsky 同步 ------------------------------------- #

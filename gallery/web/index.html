@@ -241,6 +241,48 @@ nav.tabs button.locked{color:var(--muted-2)}
   box-shadow:var(--shadow);transition:opacity .3s,transform .3s var(--ease);max-width:min(90vw,460px);text-align:center;
 }
 #toast.show{opacity:1;transform:translate(-50%,0)}
+
+/* 悬停出列 90% */
+#hoverLayer{
+  position:fixed;inset:0;z-index:70;pointer-events:none;display:flex;align-items:center;justify-content:center;
+  background:rgba(4,5,7,.42);backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);
+  opacity:0;transition:opacity .3s var(--ease);
+}
+#hoverLayer.show{opacity:1}
+#hoverLayer .pop{position:relative;width:90vw;height:90vh;display:flex;flex-direction:column;justify-content:center;align-items:center}
+#hoverLayer img,#hoverLayer video{max-width:100%;max-height:100%;object-fit:contain;border-radius:16px;
+  box-shadow:0 40px 100px -30px rgba(0,0,0,.95);animation:pop .35s var(--ease)}
+@keyframes pop{from{opacity:0;transform:scale(.96)}to{opacity:1;transform:none}}
+#hoverLayer .cap{position:absolute;bottom:18px;left:18px;background:rgba(0,0,0,.6);border:1px solid var(--line-strong);
+  backdrop-filter:blur(10px);padding:10px 16px;border-radius:14px;color:#e7e9ee;font-size:14px;max-width:80%}
+#hoverLayer .cap .tags{margin-top:7px;display:flex;gap:6px;flex-wrap:wrap}
+
+/* 编辑按钮（管理模式可见） */
+.edit-btn{position:absolute;top:10px;right:10px;z-index:10;width:34px;height:34px;border-radius:50%;
+  border:1px solid var(--line-strong);background:rgba(20,22,27,.8);color:#fff;font-size:15px;cursor:pointer;
+  display:none;align-items:center;justify-content:center;backdrop-filter:blur(8px);transition:background .2s,transform .2s}
+.edit-btn:hover{background:rgba(52,211,153,.9);transform:scale(1.08)}
+.card.admin .edit-btn{display:flex}
+
+/* 编辑面板 */
+#editor{position:fixed;inset:0;z-index:110;display:none;align-items:center;justify-content:center;padding:24px;
+  background:rgba(4,5,7,.82);backdrop-filter:blur(18px);-webkit-backdrop-filter:blur(18px);animation:fadeIn .28s var(--ease)}
+#editor.show{display:flex}
+.editor-card{width:100%;max-width:420px;padding:26px 24px;border-radius:20px;
+  background:linear-gradient(180deg,rgba(255,255,255,.07),rgba(255,255,255,.03));
+  border:1px solid var(--line);box-shadow:var(--shadow)}
+.editor-card h2{font-size:18px;font-weight:640;margin-bottom:18px}
+.editor-card label{display:block;font-size:12.5px;color:var(--muted);margin:0 0 7px}
+.editor-card input,.editor-card select{width:100%;padding:11px 13px;font-size:14px;font-family:inherit;color:var(--text);
+  background:rgba(0,0,0,.4);border:1px solid var(--line-strong);border-radius:12px;outline:none;margin-bottom:16px}
+.editor-card input:focus,.editor-card select:focus{border-color:rgba(52,211,153,.6);box-shadow:0 0 0 4px rgba(52,211,153,.12)}
+.editor-card .row{display:flex;gap:12px}
+.editor-card .row>div{flex:1}
+.editor-actions{display:flex;justify-content:flex-end;gap:10px;margin-top:4px}
+.editor-actions button{border:0;cursor:pointer;font-family:inherit;font-size:14px;font-weight:600;padding:11px 18px;border-radius:12px}
+.editor-actions .cancel{background:var(--surface-2);color:var(--muted)}
+.editor-actions .save{background:linear-gradient(135deg,var(--accent),#5eead4);color:#04140d}
+.editor-err{color:#f87171;font-size:13px;margin:-6px 0 12px;min-height:16px}
 </style>
 </head>
 <body>
@@ -295,6 +337,45 @@ nav.tabs button.locked{color:var(--muted-2)}
   <div class="lb-stage" id="lbStage"></div>
 </div>
 
+<!-- ===================== 悬停出列层（90%） ===================== -->
+<div id="hoverLayer">
+  <div class="pop" id="hoverPop"></div>
+</div>
+
+<!-- ===================== 隐形管理 · 编辑面板 ===================== -->
+<div id="editor">
+  <div class="editor-card">
+    <h2>编辑属性</h2>
+    <label>标题</label>
+    <input id="edTitle" type="text" placeholder="标题" autocomplete="off">
+    <div class="row">
+      <div>
+        <label>分类</label>
+        <select id="edCategory">
+          <option value="ai">AI</option>
+          <option value="me">我</option>
+          <option value="other">其他</option>
+          <option value="private">🔒 私密</option>
+        </select>
+      </div>
+      <div>
+        <label>权限</label>
+        <select id="edVisibility">
+          <option value="public">公开</option>
+          <option value="private">私密</option>
+        </select>
+      </div>
+    </div>
+    <label>标签（逗号分隔）</label>
+    <input id="edTags" type="text" placeholder="如：风景, 旅行" autocomplete="off">
+    <div class="editor-err" id="edErr"></div>
+    <div class="editor-actions">
+      <button class="cancel" id="edCancel">取消</button>
+      <button class="save" id="edSave">保存</button>
+    </div>
+  </div>
+</div>
+
 <div id="toast"></div>
 
 <script>
@@ -324,6 +405,8 @@ nav.tabs button.locked{color:var(--muted-2)}
     stats: {},
     lbList: [],
     lbIndex: 0,
+    isAdminMode: false,
+    editingItem: null,
   };
 
   const $ = (id) => document.getElementById(id);
@@ -480,15 +563,19 @@ nav.tabs button.locked{color:var(--muted-2)}
               loading="lazy" decoding="async" data-idx="${idx}"
               onerror="if(this.dataset.f){this.style.opacity=.25;return}this.dataset.f=1;this.src='${esc(withToken(item.url))}'">`;
     const cat = esc(item.category);
-    return `<figure class="card">
+    const tags = String(item.tags || "").split(",").map((t) => t.trim()).filter(Boolean)
+      .map((t) => `<span class="tag other">${esc(t)}</span>`).join("");
+    return `<figure class="card ${state.isAdminMode ? "admin" : ""}" data-idx="${idx}">
       ${media}
       ${isVideo ? '<span class="badge-v">VIDEO</span>' : ""}
       ${item.category === "private" ? '<span class="badge-lock">🔒</span>' : ""}
+      ${state.isAdminMode ? `<button class="edit-btn" data-idx="${idx}" title="编辑">⚙️</button>` : ""}
       <figcaption class="ov">
         <h3>${esc(item.title) || "无标题"}</h3>
         <div class="meta">
           <span class="tag ${cat}">${cat}</span>
           ${item.is_featured ? '<span class="tag star">★ 精选</span>' : ""}
+          ${tags}
         </div>
       </figcaption>
     </figure>`;
@@ -497,6 +584,19 @@ nav.tabs button.locked{color:var(--muted-2)}
   function bindCards() {
     grid.querySelectorAll(".media").forEach((el) => {
       el.addEventListener("click", () => openLightbox(parseInt(el.dataset.idx, 10)));
+    });
+    grid.querySelectorAll(".edit-btn").forEach((el) => {
+      el.addEventListener("click", (e) => {
+        e.stopPropagation();
+        openEditor(parseInt(el.dataset.idx, 10));
+      });
+    });
+    // 悬停出列（90%）+ 双击全屏（100%）
+    grid.querySelectorAll(".card").forEach((el) => {
+      const idx = parseInt(el.dataset.idx, 10);
+      el.addEventListener("mouseenter", () => showHover(state.items[idx]));
+      el.addEventListener("mouseleave", hideHover);
+      el.addEventListener("dblclick", () => openLightbox(idx));
     });
   }
 
@@ -556,6 +656,7 @@ nav.tabs button.locked{color:var(--muted-2)}
   /* ------------------------------ 灯箱 ------------------------------ */
   function openLightbox(idx) {
     if (isNaN(idx)) return;
+    hideHover();
     state.lbList = state.items;
     state.lbIndex = idx;
     renderLightbox();
@@ -580,11 +681,14 @@ nav.tabs button.locked{color:var(--muted-2)}
     const body = item.type === "video"
       ? `<video src="${src}" controls autoplay playsinline></video>`
       : `<img src="${src}" alt="${esc(item.title)}">`;
+    const tags = String(item.tags || "").split(",").map((t) => t.trim()).filter(Boolean)
+      .map((t) => `<span class="tag other">${esc(t)}</span>`).join("");
     $("lbStage").innerHTML = `${body}
       <div class="lb-cap">
         <span>${esc(item.title) || "无标题"}</span>
         <span class="tag ${esc(item.category)}">${esc(item.category)}</span>
         ${item.is_featured ? '<span class="tag star">★ 精选</span>' : ""}
+        ${tags}
         <span style="color:#5d6269">${state.lbIndex + 1} / ${state.lbList.length}</span>
       </div>`;
   }
@@ -593,6 +697,10 @@ nav.tabs button.locked{color:var(--muted-2)}
   $("lbNext").addEventListener("click", (e) => { e.stopPropagation(); step(1); });
   $("lightbox").addEventListener("click", (e) => { if (e.target.id === "lightbox") closeLightbox(); });
   document.addEventListener("keydown", (e) => {
+    if ($("editor").classList.contains("show")) {
+      if (e.key === "Escape") closeEditor();
+      return;
+    }
     if ($("lightbox").classList.contains("hidden")) {
       if (e.key === "Escape" && !gate.classList.contains("hidden")) $("pwd").focus();
       return;
@@ -601,6 +709,91 @@ nav.tabs button.locked{color:var(--muted-2)}
     if (e.key === "ArrowLeft") step(-1);
     if (e.key === "ArrowRight") step(1);
   });
+
+  /* ------------------------------ 悬停出列（90%） ------------------------------ */
+  let hoverTimer = null;
+  function showHover(item) {
+    if (!item) return;
+    if (!$("lightbox").classList.contains("hidden")) return; // 全屏时忽略悬停
+    clearTimeout(hoverTimer);
+    hoverTimer = setTimeout(() => {
+      if (!item) return;
+      const src = esc(withToken(item.url));
+      const body = item.type === "video"
+        ? `<video src="${src}" autoplay muted loop playsinline></video>`
+        : `<img src="${src}" alt="${esc(item.title)}">`;
+      const tags = String(item.tags || "").split(",").map((t) => t.trim()).filter(Boolean)
+        .map((t) => `<span class="tag other">${esc(t)}</span>`).join("");
+      $("hoverPop").innerHTML = body +
+        `<div class="cap"><div>${esc(item.title) || "无标题"}</div>${tags ? `<div class="tags">${tags}</div>` : ""}</div>`;
+      $("hoverLayer").classList.add("show");
+    }, 150);
+  }
+  function hideHover() {
+    clearTimeout(hoverTimer);
+    $("hoverLayer").classList.remove("show");
+  }
+
+  /* ------------------------------ 隐形管理 + 编辑面板 ------------------------------ */
+  function toggleAdmin() {
+    if (state.scope !== "full") {
+      openGate("管理需要长期口令，请重新输入");
+      return;
+    }
+    state.isAdminMode = !state.isAdminMode;
+    toast(state.isAdminMode ? "管理模式：开（双击卡片齿轮编辑）" : "管理模式：关");
+    grid.innerHTML = state.items.map(cardHTML).join("");
+    bindCards();
+  }
+
+  function openEditor(idx) {
+    if (state.scope !== "full") { toast("需要长期口令"); return; }
+    const item = state.items[idx];
+    if (!item) return;
+    state.editingItem = Object.assign({}, item);
+    $("edTitle").value = item.title || "";
+    $("edCategory").value = item.category || "other";
+    $("edVisibility").value = (item.visibility === "private") ? "private" : "public";
+    $("edTags").value = String(item.tags || "").split(",").map((t) => t.trim()).filter(Boolean).join(", ");
+    $("edErr").textContent = "";
+    $("editor").classList.add("show");
+    setTimeout(() => $("edTitle").focus(), 60);
+  }
+  function closeEditor() {
+    $("editor").classList.remove("show");
+    state.editingItem = null;
+  }
+  async function saveEdit() {
+    const item = state.editingItem;
+    if (!item) return;
+    const payload = {
+      category: $("edCategory").value,
+      visibility: $("edVisibility").value,
+      tags: $("edTags").value.split(",").map((s) => s.trim()).filter(Boolean).join(","),
+    };
+    const t = $("edTitle").value.trim();
+    if (t) payload.title = t;
+    const btn = $("edSave");
+    btn.disabled = true; btn.textContent = "保存中…"; $("edErr").textContent = "";
+    try {
+      await api("/api/admin/media/" + item.id, { method: "PATCH", body: JSON.stringify(payload) });
+      const i = state.items.findIndex((x) => x.id === item.id);
+      if (i >= 0) state.items[i] = Object.assign({}, state.items[i], payload);
+      closeEditor();
+      grid.innerHTML = state.items.map(cardHTML).join("");
+      bindCards();
+      toast("已保存");
+    } catch (err) {
+      $("edErr").textContent = err.message || "保存失败";
+    } finally {
+      btn.disabled = false; btn.textContent = "保存";
+    }
+  }
+
+  document.querySelector(".brand").addEventListener("dblclick", toggleAdmin);
+  $("edCancel").addEventListener("click", closeEditor);
+  $("edSave").addEventListener("click", saveEdit);
+  $("editor").addEventListener("click", (e) => { if (e.target.id === "editor") closeEditor(); });
 
   /* ------------------------------ 启动 ------------------------------ */
   async function boot() {
