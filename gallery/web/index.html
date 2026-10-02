@@ -212,7 +212,7 @@ nav.tabs button.locked{color:var(--muted-2)}
   animation:fadeIn .28s var(--ease);
 }
 .lb.hidden{display:none}
-.lb-stage{max-width:100%;max-height:100%;display:flex;flex-direction:column;align-items:center;gap:14px;animation:rise .4s var(--ease)}
+.lb-stage{position:relative;max-width:100%;max-height:100%;display:flex;flex-direction:column;align-items:center;gap:14px;animation:rise .4s var(--ease)}
 .lb-stage img,.lb-stage video{
   max-width:min(94vw,1400px);max-height:82vh;border-radius:14px;object-fit:contain;
   box-shadow:0 40px 90px -30px rgba(0,0,0,.95);
@@ -232,6 +232,18 @@ nav.tabs button.locked{color:var(--muted-2)}
   backdrop-filter:blur(10px);transition:background .2s;
 }
 .lb-close:hover{background:rgba(255,255,255,.16)}
+
+.lb-loading{position:absolute;top:50%;left:50%;width:34px;height:34px;margin:-17px 0 0 -17px;border-radius:50%;
+  border:3px solid rgba(255,255,255,.15);border-top-color:#fff;animation:spin .8s linear infinite;pointer-events:none}
+.lb-orig{color:#9aa0a8;font-size:12.5px;text-decoration:underline;cursor:pointer}
+.editor-actions .danger{background:rgba(248,113,113,.15);color:#f87171;margin-right:auto}
+.admin-bar{position:fixed;right:18px;bottom:18px;z-index:60;display:none;gap:8px}
+.admin-bar.show{display:flex}
+.admin-bar button{border:1px solid var(--line-strong);background:rgba(20,22,27,.9);color:#fff;border-radius:12px;
+  padding:9px 14px;font-size:13px;cursor:pointer;font-family:inherit}
+.editor-card .hint{font-size:12px;color:var(--muted);margin:-8px 0 14px;line-height:1.5}
+.pw-result{font-family:monospace;user-select:all;background:rgba(0,0,0,.4);padding:8px 10px;border-radius:10px;
+  margin-bottom:12px;word-break:break-all;display:none}
 
 /* 提示 */
 #toast{
@@ -265,9 +277,10 @@ nav.tabs button.locked{color:var(--muted-2)}
 .card.admin .edit-btn{display:flex}
 
 /* 编辑面板 */
-#editor{position:fixed;inset:0;z-index:110;display:none;align-items:center;justify-content:center;padding:24px;
+#editor,#pwdPanel{position:fixed;inset:0;z-index:110;display:none;align-items:center;justify-content:center;padding:24px;
   background:rgba(4,5,7,.82);backdrop-filter:blur(18px);-webkit-backdrop-filter:blur(18px);animation:fadeIn .28s var(--ease)}
 #editor.show{display:flex}
+#pwdPanel{display:none}
 .editor-card{width:100%;max-width:420px;padding:26px 24px;border-radius:20px;
   background:linear-gradient(180deg,rgba(255,255,255,.07),rgba(255,255,255,.03));
   border:1px solid var(--line);box-shadow:var(--shadow)}
@@ -370,8 +383,39 @@ nav.tabs button.locked{color:var(--muted-2)}
     <input id="edTags" type="text" placeholder="如：风景, 旅行" autocomplete="off">
     <div class="editor-err" id="edErr"></div>
     <div class="editor-actions">
+      <button class="danger" id="edDelete">删除</button>
       <button class="cancel" id="edCancel">取消</button>
       <button class="save" id="edSave">保存</button>
+    </div>
+  </div>
+</div>
+
+<div class="admin-bar" id="adminBar"><button id="btnPwd">🔑 口令管理</button><button id="btnSync">🔄 同步图床</button></div>
+
+<div id="pwdPanel">
+  <div class="editor-card" style="max-width:440px">
+    <h2>口令管理</h2>
+    <div id="pwdStatus" class="hint"></div>
+    <label>当前长期口令（必填，用于确认身份）</label>
+    <input id="pwCurrent" type="password" autocomplete="current-password">
+    <div class="row">
+      <div>
+        <label>要修改的口令</label>
+        <select id="pwKind"><option value="perm">长期口令</option><option value="temp">限时口令（访客）</option></select>
+      </div>
+      <div>
+        <label>有效天数（仅限时）</label>
+        <input id="pwDays" type="number" min="1" max="365" value="7">
+      </div>
+    </div>
+    <label>新口令（留空 = 随机生成，至少 6 位）</label>
+    <input id="pwNew" type="text" autocomplete="off">
+    <div class="pw-result" id="pwResult"></div>
+    <div class="editor-err" id="pwErr"></div>
+    <div class="editor-actions">
+      <button class="danger" id="pwRevoke">停用限时口令</button>
+      <button class="cancel" id="pwClose">关闭</button>
+      <button class="save" id="pwSave">应用</button>
     </div>
   </div>
 </div>
@@ -508,6 +552,7 @@ nav.tabs button.locked{color:var(--muted-2)}
   });
 
   $("logout").addEventListener("click", () => {
+    state.isAdminMode = false; $("adminBar").classList.remove("show");
     clearToken(); state.items = []; grid.innerHTML = "";
     openGate("已退出，请输入口令重新进入");
   });
@@ -560,7 +605,7 @@ nav.tabs button.locked{color:var(--muted-2)}
       ? `<video class="media" src="${esc(withToken(item.url))}" muted loop playsinline preload="metadata"
                 data-idx="${idx}" onmouseenter="this.play()" onmouseleave="this.pause()"></video>`
       : `<img class="media" src="${esc(withToken(item.thumbnail || item.url))}" alt="${esc(item.title)}"
-              loading="lazy" decoding="async" data-idx="${idx}"
+              loading="lazy" decoding="async" referrerpolicy="no-referrer" data-idx="${idx}"
               onerror="if(this.dataset.f){this.style.opacity=.25;return}this.dataset.f=1;this.src='${esc(withToken(item.url))}'">`;
     const cat = esc(item.category);
     const tags = String(item.tags || "").split(",").map((t) => t.trim()).filter(Boolean)
@@ -674,13 +719,31 @@ nav.tabs button.locked{color:var(--muted-2)}
     state.lbIndex = (state.lbIndex + delta + n) % n;
     renderLightbox();
   }
+  // 大图：优先加载服务端生成的中等尺寸预览，失败依次回退缩略图 / 原图，加载中显示转圈
+  function bigImgHTML(item) {
+    const chain = [item.preview, item.url, item.thumbnail].filter(Boolean);
+    const uniq = chain.filter((u, i) => chain.indexOf(u) === i).map(withToken);
+    return `<img data-chain='${esc(JSON.stringify(uniq))}' data-i="0" src="${esc(uniq[0])}" alt="${esc(item.title)}"
+      referrerpolicy="no-referrer" decoding="async"
+      onload="var l=this.parentNode.querySelector('.lb-loading');if(l)l.remove()"
+      onerror="window.__imgFallback(this)">
+      <span class="lb-loading"></span>`;
+  }
+  window.__imgFallback = (img) => {
+    let chain = [];
+    try { chain = JSON.parse(img.dataset.chain || "[]"); } catch (e) { /* ignore */ }
+    const i = parseInt(img.dataset.i || "0", 10) + 1;
+    if (i < chain.length) { img.dataset.i = i; img.src = chain[i]; return; }
+    const l = img.parentNode && img.parentNode.querySelector(".lb-loading");
+    if (l) l.remove();
+    img.alt = "图片加载失败";
+  };
   function renderLightbox() {
     const item = state.lbList[state.lbIndex];
     if (!item) return;
-    const src = esc(withToken(item.url));
     const body = item.type === "video"
-      ? `<video src="${src}" controls autoplay playsinline></video>`
-      : `<img src="${src}" alt="${esc(item.title)}">`;
+      ? `<video src="${esc(withToken(item.url))}" controls autoplay playsinline></video>`
+      : bigImgHTML(item);
     const tags = String(item.tags || "").split(",").map((t) => t.trim()).filter(Boolean)
       .map((t) => `<span class="tag other">${esc(t)}</span>`).join("");
     $("lbStage").innerHTML = `${body}
@@ -718,10 +781,9 @@ nav.tabs button.locked{color:var(--muted-2)}
     clearTimeout(hoverTimer);
     hoverTimer = setTimeout(() => {
       if (!item) return;
-      const src = esc(withToken(item.url));
       const body = item.type === "video"
-        ? `<video src="${src}" autoplay muted loop playsinline></video>`
-        : `<img src="${src}" alt="${esc(item.title)}">`;
+        ? `<video src="${esc(withToken(item.url))}" autoplay muted loop playsinline></video>`
+        : bigImgHTML(item);
       const tags = String(item.tags || "").split(",").map((t) => t.trim()).filter(Boolean)
         .map((t) => `<span class="tag other">${esc(t)}</span>`).join("");
       $("hoverPop").innerHTML = body +
@@ -741,7 +803,8 @@ nav.tabs button.locked{color:var(--muted-2)}
       return;
     }
     state.isAdminMode = !state.isAdminMode;
-    toast(state.isAdminMode ? "管理模式：开（双击卡片齿轮编辑）" : "管理模式：关");
+    $("adminBar").classList.toggle("show", state.isAdminMode);
+    toast(state.isAdminMode ? "管理模式：开（点击卡片 ⚙️ 编辑 / 删除）" : "管理模式：关");
     grid.innerHTML = state.items.map(cardHTML).join("");
     bindCards();
   }
@@ -789,6 +852,72 @@ nav.tabs button.locked{color:var(--muted-2)}
       btn.disabled = false; btn.textContent = "保存";
     }
   }
+
+  async function deleteItem() {
+    const item = state.editingItem;
+    if (!item || !confirm("确定从展馆移除「" + (item.title || item.id) + "」？（图床原文件不会被删除）")) return;
+    try {
+      await api("/api/admin/media/" + item.id, { method: "DELETE" });
+      state.items = state.items.filter((x) => x.id !== item.id);
+      closeEditor();
+      grid.innerHTML = state.items.map(cardHTML).join("");
+      bindCards();
+      toast("已删除");
+    } catch (err) {
+      $("edErr").textContent = err.message || "删除失败";
+    }
+  }
+  $("edDelete").addEventListener("click", deleteItem);
+  $("edCategory").addEventListener("change", () => {
+    $("edVisibility").value = $("edCategory").value === "private" ? "private" : "public";
+  });
+  $("edVisibility").addEventListener("change", () => {
+    const v = $("edVisibility").value;
+    if (v === "private") $("edCategory").value = "private";
+    else if ($("edCategory").value === "private") $("edCategory").value = "other";
+  });
+
+  /* 口令管理 / 同步 */
+  async function refreshPwdStatus() {
+    try {
+      const s = await api("/api/admin/status");
+      const exp = s.temp_expires_at ? new Date(s.temp_expires_at * 1000).toLocaleString() : "";
+      $("pwdStatus").textContent = `长期口令：${s.perm_set ? "已设置" : "未设置"}　限时口令：` +
+        (s.temp_active ? "有效至 " + exp : (s.temp_set ? "已过期" : "未设置")) + `　媒体 ${s.media_count} 条`;
+    } catch (e) { /* ignore */ }
+  }
+  $("btnPwd").addEventListener("click", () => {
+    $("pwdPanel").style.display = "flex"; $("pwErr").textContent = ""; $("pwResult").style.display = "none";
+    refreshPwdStatus();
+  });
+  $("pwClose").addEventListener("click", () => { $("pwdPanel").style.display = "none"; $("pwCurrent").value = ""; $("pwNew").value = ""; });
+  $("pwSave").addEventListener("click", async () => {
+    $("pwErr").textContent = ""; $("pwResult").style.display = "none";
+    const kind = $("pwKind").value;
+    try {
+      const r = await api("/api/admin/password", { method: "POST", body: JSON.stringify({
+        current_password: $("pwCurrent").value, kind, new_password: $("pwNew").value,
+        days: parseFloat($("pwDays").value) || 7 }) });
+      if (r.token) saveToken(r.token, r.scope, !!localStorage.getItem("gallery_token"));
+      if (r.generated) { $("pwResult").textContent = r.password; $("pwResult").style.display = "block"; }
+      $("pwNew").value = ""; $("pwCurrent").value = "";
+      toast(r.message || "已更新", 4000);
+      refreshPwdStatus();
+    } catch (err) { $("pwErr").textContent = err.message || "失败"; }
+  });
+  $("pwRevoke").addEventListener("click", async () => {
+    if (!confirm("停用限时口令并让所有访客令牌失效？")) return;
+    try { const r = await api("/api/admin/password/temp", { method: "DELETE" }); toast(r.message); refreshPwdStatus(); }
+    catch (err) { $("pwErr").textContent = err.message || "失败"; }
+  });
+  $("btnSync").addEventListener("click", async () => {
+    try {
+      const r = await api("/api/admin/sync", { method: "POST" });
+      toast(`同步完成：新增 ${r.added}，已存在 ${r.skipped}`);
+      const s = await api("/api/stats"); state.stats = s.data || {}; renderTabs();
+      await load(true);
+    } catch (err) { toast(err.message || "同步失败"); }
+  });
 
   document.querySelector(".brand").addEventListener("dblclick", toggleAdmin);
   $("edCancel").addEventListener("click", closeEditor);
