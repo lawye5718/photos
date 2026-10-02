@@ -152,7 +152,7 @@ class ImageService
         $this->rateLimiter($configs, $request);
 
         // 图片处理，跳过 ico gif svg
-        if (! in_array($extension, ['ico', 'gif', 'svg'])) {
+        if (! in_array($extension, ['ico', 'gif', 'svg', 'mp4', 'mov', 'avi', 'mkv', 'webm', 'm4v', 'mpg', 'mpeg', 'flv', 'wmv', '3gp', 'ogv', 'ts', 'm2ts', 'mts'])) {
             // 图片保存质量与格式
             $quality = $configs->get(GroupConfigKey::ImageSaveQuality, 75);
             $format = $configs->get(GroupConfigKey::ImageSaveFormat);
