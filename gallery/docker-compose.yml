@@ -1,0 +1,35 @@
+services:
+  gallery:
+    build:
+      context: .
+      # 群晖 docker0 桥接出口极慢，构建期用 host 网络直连镜像源
+      network: host
+    image: gallery-studio:local
+    container_name: gallery
+    restart: unless-stopped
+
+    # 宿主 8890（已核验空闲；与现有 8888/8730/8731/8787/20128 等均不冲突）
+    ports:
+      - "8890:8890"
+
+    environment:
+      TZ: Asia/Shanghai
+      GALLERY_PORT: "8890"
+      GALLERY_DATA: /app/data
+      # 只读挂载 Lsky Pro 的 storage：用于同步元数据 + 私密文件流式输出
+      LSKY_STORAGE: /lsky-storage
+      LSKY_APP_URL: https://pic.damingxing.vip
+      LSKY_UPLOAD_SUBDIR: app/uploads
+      TOKEN_TTL: "604800"          # 长期口令签发的 token 有效期（7 天）
+
+    volumes:
+      - ./data:/app/data
+      - /volume1/docker/lsky/storage:/lsky-storage:ro
+
+    healthcheck:
+      # 用首页探测：/api/* 需要令牌，urllib 遇 401 会直接抛异常，不适合做健康检查
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8890/', timeout=5).status == 200 else 1)"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 20s

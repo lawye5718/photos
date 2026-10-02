@@ -1,0 +1,8 @@
+# ---- gallery（光影收藏）运行时产物 ----
+gallery/__pycache__/
+gallery/*.pyc
+gallery/data/
+
+# ---- lsky（Lsky Pro）密钥与运行时数据 ----
+lsky/.env
+lsky/storage/

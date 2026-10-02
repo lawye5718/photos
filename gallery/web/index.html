@@ -1,0 +1,626 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="referrer" content="no-referrer">
+<title>Studio · 光影收藏</title>
+<style>
+/* ===================== 设计令牌 ===================== */
+:root{
+  --bg:#08090c;
+  --surface:rgba(255,255,255,.045);
+  --surface-2:rgba(255,255,255,.07);
+  --line:rgba(255,255,255,.08);
+  --line-strong:rgba(255,255,255,.16);
+  --text:#f2f3f5;
+  --muted:#8b8f98;
+  --muted-2:#5d6269;
+  --accent:#34d399;
+  --accent-2:#22d3ee;
+  --gold:#fbbf24;
+  --radius:18px;
+  --ease:cubic-bezier(.22,1,.36,1);
+  --shadow:0 18px 50px -20px rgba(0,0,0,.85);
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%}
+body{
+  background:var(--bg);
+  color:var(--text);
+  font-family:-apple-system,BlinkMacSystemFont,"SF Pro SC","PingFang SC","Helvetica Neue",Inter,"Segoe UI",Roboto,"Noto Sans SC",sans-serif;
+  -webkit-font-smoothing:antialiased;
+  letter-spacing:.01em;
+  min-height:100vh;
+  overflow-x:hidden;
+}
+/* 背景光晕：沉浸感来源 */
+body::before{
+  content:"";position:fixed;inset:-30% -10% auto -10%;height:70vh;z-index:0;pointer-events:none;
+  background:
+    radial-gradient(45% 55% at 22% 18%,rgba(52,211,153,.10),transparent 70%),
+    radial-gradient(40% 50% at 78% 8%,rgba(34,211,238,.09),transparent 70%),
+    radial-gradient(60% 60% at 50% 0%,rgba(120,119,198,.10),transparent 70%);
+  filter:blur(20px);
+}
+::selection{background:rgba(52,211,153,.28)}
+
+/* ===================== 门禁 ===================== */
+#gate{
+  position:fixed;inset:0;z-index:100;display:flex;align-items:center;justify-content:center;padding:24px;
+  background:radial-gradient(120% 100% at 50% 0%,#0b0e13 0%,#07080a 60%,#050506 100%);
+  animation:fadeIn .5s var(--ease);
+}
+#gate.hidden{display:none}
+.gate-card{
+  width:100%;max-width:400px;padding:38px 34px 30px;border-radius:24px;text-align:center;
+  background:linear-gradient(180deg,rgba(255,255,255,.07),rgba(255,255,255,.028));
+  border:1px solid var(--line);backdrop-filter:blur(28px) saturate(150%);
+  -webkit-backdrop-filter:blur(28px) saturate(150%);
+  box-shadow:var(--shadow);
+}
+.gate-mark{
+  width:54px;height:54px;margin:0 auto 20px;border-radius:16px;
+  background:linear-gradient(135deg,var(--accent),var(--accent-2));
+  display:flex;align-items:center;justify-content:center;font-size:24px;
+  box-shadow:0 0 0 1px rgba(255,255,255,.12),0 14px 34px -10px rgba(52,211,153,.6);
+}
+.gate-title{font-size:21px;font-weight:640;letter-spacing:-.01em}
+.gate-sub{font-size:13.5px;color:var(--muted);margin-top:9px;line-height:1.6}
+.field{position:relative;margin-top:24px}
+.field input{
+  width:100%;padding:14px 46px 14px 16px;font-size:15px;color:var(--text);font-family:inherit;
+  background:rgba(0,0,0,.36);border:1px solid var(--line-strong);border-radius:14px;outline:none;
+  transition:border-color .2s,box-shadow .2s,background .2s;
+}
+.field input::placeholder{color:var(--muted-2)}
+.field input:focus{border-color:rgba(52,211,153,.6);box-shadow:0 0 0 4px rgba(52,211,153,.12);background:rgba(0,0,0,.5)}
+.field .eye{
+  position:absolute;right:6px;top:50%;transform:translateY(-50%);width:36px;height:36px;border:0;cursor:pointer;
+  background:transparent;color:var(--muted);font-size:15px;border-radius:10px;transition:color .2s,background .2s;
+}
+.field .eye:hover{color:var(--text);background:var(--surface)}
+.btn-primary{
+  width:100%;margin-top:16px;padding:13.5px;border:0;border-radius:14px;cursor:pointer;
+  font-size:15px;font-weight:620;font-family:inherit;color:#04140d;
+  background:linear-gradient(135deg,var(--accent),#5eead4);
+  transition:transform .18s var(--ease),filter .18s,box-shadow .2s;
+  box-shadow:0 12px 30px -12px rgba(52,211,153,.7);
+}
+.btn-primary:hover{filter:brightness(1.08);transform:translateY(-1px)}
+.btn-primary:active{transform:translateY(0)}
+.btn-primary[disabled]{opacity:.55;cursor:default;transform:none;filter:none}
+.gate-row{display:flex;align-items:center;justify-content:space-between;margin-top:16px;font-size:12.5px;color:var(--muted)}
+.check{display:flex;align-items:center;gap:7px;cursor:pointer;user-select:none}
+.check input{accent-color:var(--accent);width:14px;height:14px;cursor:pointer}
+.gate-hint{margin-top:20px;font-size:12px;color:var(--muted-2);line-height:1.7;border-top:1px solid var(--line);padding-top:16px}
+.gate-err{color:#f87171;font-size:13px;margin-top:14px;min-height:18px}
+.shake{animation:shake .4s}
+@keyframes shake{10%,90%{transform:translateX(-2px)}20%,80%{transform:translateX(4px)}30%,50%,70%{transform:translateX(-7px)}40%,60%{transform:translateX(7px)}}
+@keyframes fadeIn{from{opacity:0}to{opacity:1}}
+@keyframes rise{from{opacity:0;transform:translateY(14px)}to{opacity:1;transform:none}}
+
+/* ===================== 主界面 ===================== */
+#app{position:relative;z-index:1;animation:rise .6s var(--ease)}
+#app.hidden{display:none}
+.wrap{max-width:1560px;margin:0 auto;padding:0 clamp(16px,3vw,40px) 90px}
+
+header.top{
+  position:sticky;top:0;z-index:40;
+  display:flex;align-items:center;gap:18px;flex-wrap:wrap;
+  padding:16px clamp(16px,3vw,40px);margin:0 calc(-1 * clamp(16px,3vw,40px)) 26px;
+  background:linear-gradient(180deg,rgba(8,9,12,.92),rgba(8,9,12,.55) 70%,transparent);
+  backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);
+}
+.brand{display:flex;align-items:center;gap:11px;font-weight:660;font-size:17px;letter-spacing:-.015em}
+.brand .dot{
+  width:11px;height:11px;border-radius:50%;
+  background:linear-gradient(135deg,var(--accent),var(--accent-2));
+  box-shadow:0 0 14px rgba(52,211,153,.85);
+}
+.brand small{display:block;font-weight:450;font-size:11px;color:var(--muted-2);letter-spacing:.14em;text-transform:uppercase}
+
+nav.tabs{
+  display:flex;gap:3px;padding:4px;margin-left:auto;flex-wrap:wrap;
+  background:var(--surface);border:1px solid var(--line);border-radius:14px;
+  backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);
+}
+nav.tabs button{
+  border:0;background:transparent;cursor:pointer;font-family:inherit;font-size:13.5px;
+  color:var(--muted);padding:8px 15px;border-radius:11px;white-space:nowrap;
+  transition:color .18s,background .18s,transform .18s var(--ease);
+}
+nav.tabs button:hover{color:var(--text);background:var(--surface-2)}
+nav.tabs button.active{
+  color:#08130e;font-weight:620;
+  background:linear-gradient(135deg,var(--accent),#5eead4);
+  box-shadow:0 8px 20px -10px rgba(52,211,153,.85);
+}
+nav.tabs button .n{font-size:11px;opacity:.6;margin-left:5px}
+nav.tabs button.locked{color:var(--muted-2)}
+
+.chip{
+  display:flex;align-items:center;gap:8px;font-size:12px;color:var(--muted);
+  padding:7px 12px;border:1px solid var(--line);border-radius:11px;background:var(--surface);
+}
+.chip .lv{width:7px;height:7px;border-radius:50%;background:var(--accent);box-shadow:0 0 9px var(--accent)}
+.chip.visitor .lv{background:var(--gold);box-shadow:0 0 9px var(--gold)}
+.chip button{border:0;background:transparent;color:var(--muted-2);cursor:pointer;font-size:12px;font-family:inherit;padding:0 0 0 2px}
+.chip button:hover{color:#f87171}
+
+.section-head{display:flex;align-items:baseline;gap:12px;margin:6px 0 20px}
+.section-head h2{font-size:23px;font-weight:650;letter-spacing:-.02em}
+.section-head span{font-size:13px;color:var(--muted-2)}
+
+/* 瀑布流 */
+.masonry{column-count:1;column-gap:20px}
+@media(min-width:620px){.masonry{column-count:2}}
+@media(min-width:1020px){.masonry{column-count:3}}
+@media(min-width:1440px){.masonry{column-count:4}}
+.card{
+  break-inside:avoid;margin:0 0 20px;position:relative;overflow:hidden;
+  border-radius:var(--radius);background:#0d0f13;border:1px solid var(--line);
+  transition:transform .45s var(--ease),box-shadow .45s var(--ease),border-color .3s;
+  animation:rise .5s var(--ease) both;
+}
+.card:hover{transform:translateY(-5px);box-shadow:var(--shadow);border-color:var(--line-strong)}
+.card .media{display:block;width:100%;height:auto;cursor:zoom-in;transition:transform .7s var(--ease);background:#111318}
+.card:hover .media{transform:scale(1.045)}
+.card .ov{
+  position:absolute;inset:0;display:flex;flex-direction:column;justify-content:flex-end;padding:15px;
+  background:linear-gradient(to top,rgba(0,0,0,.86) 0%,rgba(0,0,0,.28) 42%,transparent 72%);
+  opacity:0;transition:opacity .35s var(--ease);pointer-events:none;
+}
+.card:hover .ov{opacity:1}
+.card .ov h3{font-size:14px;font-weight:560;line-height:1.45;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.card .meta{display:flex;align-items:center;gap:7px;margin-top:7px;flex-wrap:wrap}
+.tag{
+  font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;font-weight:620;
+  padding:3px 8px;border-radius:999px;border:1px solid var(--line-strong);
+  background:rgba(0,0,0,.45);backdrop-filter:blur(8px);color:#d5d8de;
+}
+.tag.ai{color:#a5b4fc;border-color:rgba(165,180,252,.34)}
+.tag.me{color:#7dd3fc;border-color:rgba(125,211,252,.34)}
+.tag.other{color:#cbd5e1;border-color:rgba(203,213,225,.26)}
+.tag.private{color:#fca5a5;border-color:rgba(252,165,165,.36)}
+.tag.star{color:var(--gold);border-color:rgba(251,191,36,.4);background:rgba(251,191,36,.1)}
+.badge-v{
+  position:absolute;top:12px;right:12px;font-size:10px;font-weight:700;letter-spacing:.14em;
+  padding:4px 9px;border-radius:8px;background:rgba(0,0,0,.65);border:1px solid var(--line-strong);
+  backdrop-filter:blur(8px);
+}
+.badge-lock{position:absolute;top:12px;left:12px;font-size:12px;padding:3px 8px;border-radius:8px;background:rgba(0,0,0,.6);border:1px solid rgba(252,165,165,.3)}
+
+.empty{text-align:center;padding:90px 20px;color:var(--muted-2);font-size:14.5px;line-height:2}
+.skeleton{
+  break-inside:avoid;margin:0 0 20px;border-radius:var(--radius);border:1px solid var(--line);
+  background:linear-gradient(100deg,#101216 30%,#171a20 50%,#101216 70%);
+  background-size:220% 100%;animation:shimmer 1.5s infinite linear;
+}
+@keyframes shimmer{from{background-position:180% 0}to{background-position:-60% 0}}
+.spinner{
+  width:26px;height:26px;margin:34px auto;border-radius:50%;
+  border:2px solid rgba(255,255,255,.12);border-top-color:var(--accent);animation:spin .8s linear infinite;
+}
+@keyframes spin{to{transform:rotate(360deg)}}
+.end{text-align:center;color:var(--muted-2);font-size:12.5px;padding:34px 0}
+
+/* 灯箱 */
+.lb{
+  position:fixed;inset:0;z-index:90;display:flex;align-items:center;justify-content:center;padding:clamp(12px,3vw,44px);
+  background:rgba(4,5,7,.94);backdrop-filter:blur(22px) saturate(130%);-webkit-backdrop-filter:blur(22px);
+  animation:fadeIn .28s var(--ease);
+}
+.lb.hidden{display:none}
+.lb-stage{max-width:100%;max-height:100%;display:flex;flex-direction:column;align-items:center;gap:14px;animation:rise .4s var(--ease)}
+.lb-stage img,.lb-stage video{
+  max-width:min(94vw,1400px);max-height:82vh;border-radius:14px;object-fit:contain;
+  box-shadow:0 40px 90px -30px rgba(0,0,0,.95);
+}
+.lb-cap{display:flex;align-items:center;gap:12px;font-size:13.5px;color:#c9ccd3;flex-wrap:wrap;justify-content:center}
+.lb-nav{
+  position:absolute;top:50%;transform:translateY(-50%);width:46px;height:46px;border-radius:50%;cursor:pointer;
+  border:1px solid var(--line-strong);background:rgba(255,255,255,.06);color:#fff;font-size:19px;
+  display:flex;align-items:center;justify-content:center;backdrop-filter:blur(10px);transition:background .2s,transform .2s;
+}
+.lb-nav:hover{background:rgba(255,255,255,.14)}
+.lb-nav.prev{left:clamp(8px,2.5vw,30px)}
+.lb-nav.next{right:clamp(8px,2.5vw,30px)}
+.lb-close{
+  position:absolute;top:clamp(12px,3vw,28px);right:clamp(12px,3vw,28px);width:44px;height:44px;border-radius:50%;
+  border:1px solid var(--line-strong);background:rgba(255,255,255,.06);color:#fff;font-size:19px;cursor:pointer;
+  backdrop-filter:blur(10px);transition:background .2s;
+}
+.lb-close:hover{background:rgba(255,255,255,.16)}
+
+/* 提示 */
+#toast{
+  position:fixed;left:50%;bottom:34px;transform:translate(-50%,20px);z-index:120;
+  padding:12px 20px;border-radius:13px;font-size:13.5px;opacity:0;pointer-events:none;
+  background:rgba(20,22,27,.94);border:1px solid var(--line-strong);backdrop-filter:blur(14px);
+  box-shadow:var(--shadow);transition:opacity .3s,transform .3s var(--ease);max-width:min(90vw,460px);text-align:center;
+}
+#toast.show{opacity:1;transform:translate(-50%,0)}
+</style>
+</head>
+<body>
+
+<!-- ===================== 门禁层 ===================== -->
+<div id="gate">
+  <form class="gate-card" id="gateForm" autocomplete="off">
+    <div class="gate-mark">◈</div>
+    <div class="gate-title">光影收藏 · 私人展馆</div>
+    <div class="gate-sub" id="gateSub">此展馆仅限受邀者进入<br>请输入访问口令</div>
+    <div class="field">
+      <input id="pwd" type="password" placeholder="访问口令" autocomplete="current-password" spellcheck="false">
+      <button class="eye" type="button" id="eye" tabindex="-1" title="显示/隐藏">👁</button>
+    </div>
+    <button class="btn-primary" id="gateBtn" type="submit">进入展馆</button>
+    <div class="gate-row">
+      <label class="check"><input type="checkbox" id="remember"> 保持登录状态</label>
+      <span id="gateMode"></span>
+    </div>
+    <div class="gate-err" id="gateErr"></div>
+    <div class="gate-hint">长期口令可浏览全部内容（含私密专区）；限时口令仅可浏览公开分类，到期自动失效。</div>
+  </form>
+</div>
+
+<!-- ===================== 主界面 ===================== -->
+<div id="app" class="hidden">
+  <div class="wrap">
+    <header class="top">
+      <div class="brand">
+        <span class="dot"></span>
+        <span>Studio<small>Private Gallery</small></span>
+      </div>
+      <nav class="tabs" id="tabs"></nav>
+      <div class="chip" id="chip"><span class="lv"></span><span id="chipText">—</span><button id="logout" title="退出">退出</button></div>
+    </header>
+
+    <div class="section-head">
+      <h2 id="title">最新</h2>
+      <span id="subtitle"></span>
+    </div>
+
+    <main class="masonry" id="grid"></main>
+    <div id="more"></div>
+  </div>
+</div>
+
+<!-- ===================== 灯箱 ===================== -->
+<div class="lb hidden" id="lightbox">
+  <button class="lb-close" id="lbClose">✕</button>
+  <button class="lb-nav prev" id="lbPrev">‹</button>
+  <button class="lb-nav next" id="lbNext">›</button>
+  <div class="lb-stage" id="lbStage"></div>
+</div>
+
+<div id="toast"></div>
+
+<script>
+(() => {
+  "use strict";
+
+  /* ------------------------------ 状态 ------------------------------ */
+  const TABS = [
+    { key: "latest",   name: "最新",  tab: "latest" },
+    { key: "featured", name: "精选",  tab: "featured" },
+    { key: "ai",       name: "AI",    category: "ai" },
+    { key: "me",       name: "我",    category: "me" },
+    { key: "other",    name: "其他",  category: "other" },
+    { key: "all",      name: "全部",  tab: "all" },
+    { key: "private",  name: "🔒 私密", category: "private", needFull: true },
+  ];
+
+  const state = {
+    token: sessionStorage.getItem("gallery_token") || localStorage.getItem("gallery_token") || "",
+    scope: sessionStorage.getItem("gallery_scope") || localStorage.getItem("gallery_scope") || "",
+    tab: "latest",
+    page: 1,
+    pageSize: 20,
+    items: [],
+    hasMore: false,
+    loading: false,
+    stats: {},
+    lbList: [],
+    lbIndex: 0,
+  };
+
+  const $ = (id) => document.getElementById(id);
+  const gate = $("gate"), app = $("app"), grid = $("grid"), more = $("more");
+
+  /* ------------------------------ 工具 ------------------------------ */
+  function saveToken(token, scope, remember) {
+    state.token = token; state.scope = scope;
+    const store = remember ? localStorage : sessionStorage;
+    (remember ? sessionStorage : localStorage).removeItem("gallery_token");
+    (remember ? sessionStorage : localStorage).removeItem("gallery_scope");
+    store.setItem("gallery_token", token);
+    store.setItem("gallery_scope", scope);
+  }
+  function clearToken() {
+    state.token = ""; state.scope = "";
+    ["gallery_token", "gallery_scope"].forEach((k) => {
+      sessionStorage.removeItem(k); localStorage.removeItem(k);
+    });
+  }
+  function withToken(url) {
+    // <img>/<video> 无法携带 header，走本服务的 /api/ 资源（缩略图/私密文件）用 ?t= 传令牌
+    if (!url || url.indexOf("/api/") !== 0) return url;
+    return url + (url.indexOf("?") >= 0 ? "&" : "?") + "t=" + encodeURIComponent(state.token);
+  }
+  let toastTimer;
+  function toast(msg, ms = 2600) {
+    const el = $("toast");
+    el.textContent = msg; el.classList.add("show");
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => el.classList.remove("show"), ms);
+  }
+  function esc(s) {
+    return String(s == null ? "" : s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+  }
+
+  /* ------------------------------ 请求 ------------------------------ */
+  async function api(path, opt = {}) {
+    const headers = Object.assign({ "Accept": "application/json" }, opt.headers || {});
+    if (state.token) headers["Authorization"] = "Bearer " + state.token;
+    if (opt.body) headers["Content-Type"] = "application/json";
+    const res = await fetch(path, Object.assign({}, opt, { headers }));
+    let data = null;
+    try { data = await res.json(); } catch (e) { /* 空响应 */ }
+    if (res.status === 401) { clearToken(); openGate("登录已过期，请重新输入口令"); throw new Error("unauthorized"); }
+    if (!res.ok) throw Object.assign(new Error((data && data.message) || "请求失败"), { status: res.status, data });
+    return data;
+  }
+
+  /* ------------------------------ 门禁 ------------------------------ */
+  let gateReason = "";
+  function openGate(reason) {
+    gateReason = reason || "";
+    gate.classList.remove("hidden");
+    app.classList.add("hidden");
+    $("gateErr").textContent = "";
+    $("gateMode").textContent = "";
+    $("gateSub").innerHTML = reason ? esc(reason) : "此展馆仅限受邀者进入<br>请输入访问口令";
+    setTimeout(() => $("pwd").focus(), 60);
+  }
+  function closeGate() {
+    gate.classList.add("hidden");
+    app.classList.remove("hidden");
+  }
+
+  $("eye").addEventListener("click", () => {
+    const p = $("pwd");
+    p.type = p.type === "password" ? "text" : "password";
+    p.focus();
+  });
+
+  $("gateForm").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const pwd = $("pwd").value;
+    if (!pwd) return;
+    const btn = $("gateBtn"); btn.disabled = true; btn.textContent = "验证中…";
+    $("gateErr").textContent = "";
+    try {
+      const res = await fetch("/api/auth/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ password: pwd }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.message || "口令错误");
+      saveToken(data.token, data.scope, $("remember").checked);
+      $("pwd").value = "";
+      closeGate();
+      toast(data.scope === "full" ? "欢迎回来 · 完整访问" : "已进入 · 访客访问");
+      await boot();
+    } catch (err) {
+      const card = document.querySelector(".gate-card");
+      $("gateErr").textContent = err.message || "验证失败";
+      card.classList.remove("shake"); void card.offsetWidth; card.classList.add("shake");
+      $("pwd").select();
+    } finally {
+      btn.disabled = false; btn.textContent = "进入展馆";
+    }
+  });
+
+  $("logout").addEventListener("click", () => {
+    clearToken(); state.items = []; grid.innerHTML = "";
+    openGate("已退出，请输入口令重新进入");
+  });
+
+  /* ------------------------------ 标签栏 ------------------------------ */
+  function renderTabs() {
+    $("tabs").innerHTML = TABS.map((t) => {
+      const locked = t.needFull && state.scope !== "full";
+      const n = state.stats[t.key];
+      return `<button data-key="${t.key}" class="${t.key === state.tab ? "active" : ""} ${locked ? "locked" : ""}">
+        ${esc(t.name)}${typeof n === "number" ? `<span class="n">${n}</span>` : ""}${locked ? " 🔒" : ""}
+      </button>`;
+    }).join("");
+    [...$("tabs").children].forEach((btn) =>
+      btn.addEventListener("click", () => switchTab(btn.dataset.key))
+    );
+  }
+
+  function currentTab() { return TABS.find((t) => t.key === state.tab); }
+
+  function switchTab(key) {
+    const t = TABS.find((x) => x.key === key);
+    if (!t) return;
+    if (t.needFull && state.scope !== "full") {
+      openGate("私密专区需要长期口令，请重新输入");
+      return;
+    }
+    state.tab = key;
+    renderTabs();
+    load(true);
+  }
+
+  function updateChip() {
+    const chip = $("chip");
+    chip.classList.toggle("visitor", state.scope !== "full");
+    $("chipText").textContent = state.scope === "full" ? "完整访问" : "访客访问";
+  }
+
+  /* ------------------------------ 列表 ------------------------------ */
+  function skeletons(n) {
+    grid.innerHTML = Array.from({ length: n }, () => {
+      const h = 180 + Math.floor(Math.random() * 220);
+      return `<div class="skeleton" style="height:${h}px"></div>`;
+    }).join("");
+  }
+
+  function cardHTML(item, idx) {
+    const isVideo = item.type === "video";
+    const media = isVideo
+      ? `<video class="media" src="${esc(withToken(item.url))}" muted loop playsinline preload="metadata"
+                data-idx="${idx}" onmouseenter="this.play()" onmouseleave="this.pause()"></video>`
+      : `<img class="media" src="${esc(withToken(item.thumbnail || item.url))}" alt="${esc(item.title)}"
+              loading="lazy" decoding="async" data-idx="${idx}"
+              onerror="if(this.dataset.f){this.style.opacity=.25;return}this.dataset.f=1;this.src='${esc(withToken(item.url))}'">`;
+    const cat = esc(item.category);
+    return `<figure class="card">
+      ${media}
+      ${isVideo ? '<span class="badge-v">VIDEO</span>' : ""}
+      ${item.category === "private" ? '<span class="badge-lock">🔒</span>' : ""}
+      <figcaption class="ov">
+        <h3>${esc(item.title) || "无标题"}</h3>
+        <div class="meta">
+          <span class="tag ${cat}">${cat}</span>
+          ${item.is_featured ? '<span class="tag star">★ 精选</span>' : ""}
+        </div>
+      </figcaption>
+    </figure>`;
+  }
+
+  function bindCards() {
+    grid.querySelectorAll(".media").forEach((el) => {
+      el.addEventListener("click", () => openLightbox(parseInt(el.dataset.idx, 10)));
+    });
+  }
+
+  async function load(reset) {
+    if (state.loading) return;
+    const t = currentTab();
+    if (!t) return;
+    state.loading = true;
+
+    if (reset) {
+      state.page = 1; state.items = [];
+      $("title").textContent = t.name.replace("🔒 ", "");
+      $("subtitle").textContent = "";
+      skeletons(t.key === "latest" ? 6 : 9);
+    } else {
+      more.innerHTML = '<div class="spinner"></div>';
+    }
+
+    const q = new URLSearchParams();
+    if (t.tab) q.set("tab", t.tab);
+    if (t.category) q.set("category", t.category);
+    q.set("page", String(state.page));
+    q.set("page_size", String(t.key === "latest" ? 10 : state.pageSize));
+
+    try {
+      const res = await api("/api/media?" + q.toString());
+      const items = res.data || [];
+      state.items = reset ? items : state.items.concat(items);
+      state.hasMore = !!res.has_more;
+      grid.innerHTML = state.items.map(cardHTML).join("");
+      bindCards();
+      $("subtitle").textContent = state.items.length ? `${state.items.length} 件作品` : "";
+      if (!state.items.length) {
+        grid.innerHTML = `<div class="empty" style="column-span:all">这里还没有内容<br><span style="font-size:13px">上传到图床后同步即可显示</span></div>`;
+      }
+      more.innerHTML = state.hasMore ? "" : (state.items.length ? '<div class="end">— 已经到底了 —</div>' : "");
+    } catch (err) {
+      if (err.status === 403) { openGate("私密专区需要长期口令，请重新输入"); }
+      else if (err.message !== "unauthorized") toast(err.message || "加载失败");
+    } finally {
+      state.loading = false;
+    }
+  }
+
+  /* ------------------------------ 无限滚动 ------------------------------ */
+  const sentinel = document.createElement("div");
+  sentinel.style.height = "1px";
+  document.body.appendChild(sentinel);
+  new IntersectionObserver((entries) => {
+    if (!entries[0].isIntersecting) return;
+    if (state.loading || !state.hasMore) return;
+    if (state.tab === "latest") return;
+    state.page += 1;
+    load(false);
+  }, { rootMargin: "600px" }).observe(sentinel);
+
+  /* ------------------------------ 灯箱 ------------------------------ */
+  function openLightbox(idx) {
+    if (isNaN(idx)) return;
+    state.lbList = state.items;
+    state.lbIndex = idx;
+    renderLightbox();
+    $("lightbox").classList.remove("hidden");
+    document.body.style.overflow = "hidden";
+  }
+  function closeLightbox() {
+    $("lightbox").classList.add("hidden");
+    $("lightbox").querySelectorAll("video").forEach((v) => v.pause());
+    document.body.style.overflow = "";
+  }
+  function step(delta) {
+    const n = state.lbList.length;
+    if (!n) return;
+    state.lbIndex = (state.lbIndex + delta + n) % n;
+    renderLightbox();
+  }
+  function renderLightbox() {
+    const item = state.lbList[state.lbIndex];
+    if (!item) return;
+    const src = esc(withToken(item.url));
+    const body = item.type === "video"
+      ? `<video src="${src}" controls autoplay playsinline></video>`
+      : `<img src="${src}" alt="${esc(item.title)}">`;
+    $("lbStage").innerHTML = `${body}
+      <div class="lb-cap">
+        <span>${esc(item.title) || "无标题"}</span>
+        <span class="tag ${esc(item.category)}">${esc(item.category)}</span>
+        ${item.is_featured ? '<span class="tag star">★ 精选</span>' : ""}
+        <span style="color:#5d6269">${state.lbIndex + 1} / ${state.lbList.length}</span>
+      </div>`;
+  }
+  $("lbClose").addEventListener("click", closeLightbox);
+  $("lbPrev").addEventListener("click", (e) => { e.stopPropagation(); step(-1); });
+  $("lbNext").addEventListener("click", (e) => { e.stopPropagation(); step(1); });
+  $("lightbox").addEventListener("click", (e) => { if (e.target.id === "lightbox") closeLightbox(); });
+  document.addEventListener("keydown", (e) => {
+    if ($("lightbox").classList.contains("hidden")) {
+      if (e.key === "Escape" && !gate.classList.contains("hidden")) $("pwd").focus();
+      return;
+    }
+    if (e.key === "Escape") closeLightbox();
+    if (e.key === "ArrowLeft") step(-1);
+    if (e.key === "ArrowRight") step(1);
+  });
+
+  /* ------------------------------ 启动 ------------------------------ */
+  async function boot() {
+    updateChip();
+    try { const s = await api("/api/stats"); state.stats = s.data || {}; } catch (e) { if (e.message === "unauthorized") return; }
+    renderTabs();
+    await load(true);
+  }
+
+  (async () => {
+    if (!state.token) { openGate(); return; }
+    try {
+      await api("/api/auth/me");
+      closeGate();
+      await boot();
+    } catch (e) {
+      if (e.message === "unauthorized") openGate("登录已过期，请重新输入口令");
+    }
+  })();
+})();
+</script>
+</body>
+</html>
