@@ -57,9 +57,13 @@ DATA_DIR = os.environ.get("GALLERY_DATA", os.path.join(os.path.dirname(os.path.a
 WEB_DIR = os.environ.get("GALLERY_WEB", os.path.join(os.path.dirname(os.path.abspath(__file__)), "web"))
 DB_PATH = os.path.join(DATA_DIR, "gallery.db")
 
-LSKY_STORAGE = os.environ.get("LSKY_STORAGE", "")          # 挂载进来的 Lsky storage 目录（只读）
+LSKY_STORAGE = os.environ.get("LSKY_STORAGE", "")          # 可选：直接读 Lsky sqlite（仅兜底，默认不挂载）
 LSKY_APP_URL = os.environ.get("LSKY_APP_URL", "https://pic.damingxing.vip").rstrip("/")
 LSKY_UPLOAD_SUBDIR = os.environ.get("LSKY_UPLOAD_SUBDIR", "app/uploads")
+# Lsky 的「Gallery 专用 HTTP 接口」：内网直连优先（不绕公网/Cloudflare），失败回落公网域名
+LSKY_API_URL = os.environ.get("LSKY_API_URL", "").rstrip("/")
+# 与 Lsky 容器环境变量 GALLERY_VERIFY_SECRET 一致；两边都配才生效
+LSKY_VERIFY_SECRET = os.environ.get("LSKY_VERIFY_SECRET", "")
 
 TOKEN_TTL = int(os.environ.get("TOKEN_TTL", str(7 * 86400)))   # 长期口令签发的 token 有效期
 CATEGORIES = ("ai", "me", "other", "private")
@@ -227,11 +231,64 @@ def verify_password(password: str, stored: Optional[str]) -> bool:
         return False
 
 
+class LskyUnavailable(Exception):
+    """Lsky 的 HTTP 接口不可达（网络/配置问题），区别于「账号密码错误」。"""
+
+
+def _lsky_api_call(path: str, payload: Optional[dict] = None, timeout: float = 8.0) -> dict:
+    """调用 Lsky 的 Gallery 专用 HTTP 接口（零挂载：不再直读 lsky.sqlite）。
+    依次尝试内网直连 LSKY_API_URL 与公网 LSKY_APP_URL，任一成功即返回。
+    凭证类错误（401/403/422）直接返回带 _error 的 dict，不继续重试。"""
+    bases = [u for u in (LSKY_API_URL, LSKY_APP_URL) if u]
+    if not bases:
+        raise LskyUnavailable("未配置 LSKY_API_URL / LSKY_APP_URL")
+    data = json.dumps(payload).encode() if payload is not None else None
+    headers = {
+        "Content-Type": "application/json",
+        "Accept": "application/json",
+        "User-Agent": "GalleryStudio/1.0",
+    }
+    if LSKY_VERIFY_SECRET:
+        headers["X-Gallery-Verify-Key"] = LSKY_VERIFY_SECRET
+    last = ""
+    for base in dict.fromkeys(bases):
+        req = urllib.request.Request(f"{base}{path}", data=data, headers=headers)
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                return json.loads(resp.read().decode("utf-8") or "{}")
+        except urllib.error.HTTPError as e:
+            body = e.read().decode("utf-8", "ignore")[:200]
+            if e.code in (401, 403, 422):
+                return {"_error": e.code, "detail": body}
+            last = f"HTTP {e.code} {body}"
+        except Exception as e:
+            last = f"{type(e).__name__}: {e}"
+    raise LskyUnavailable(last or "Lsky 接口不可用")
+
+
 def verify_lsky_user(email: str, password: str) -> Optional[dict]:
-    """校验 Lsky Pro 账号（邮箱 + 密码），返回 {id, is_adminer} 或 None。
-    Lsky 密码是 Laravel bcrypt（$2y$ 前缀），Python bcrypt 用 $2a$ 等价校验。"""
-    db_file = os.path.join(LSKY_STORAGE, "app", "lsky.sqlite")
-    if not os.path.isfile(db_file) or not email or not password:
+    """校验 Lsky Pro 账号（邮箱 + 密码），返回 {id, is_adminer} 或 None（凭证错误）。
+    主路径：经 Lsky 的 POST /api/auth/verify（PHP 侧用 Auth::validate 校验 bcrypt）。
+    兜底：若仍挂载了 Lsky 的 sqlite（LSKY_STORAGE），本地 bcrypt 校验（Lsky 是 $2y$ 前缀，
+    Python bcrypt 需先换成 $2a$）。Lsky 整体不可达时抛 LskyUnavailable。"""
+    if not email or not password:
+        return None
+    res = _lsky_api_call("/api/auth/verify", {"email": email.strip(), "password": password})
+    if res.get("status") is True:
+        return {"id": res.get("user_id"), "is_adminer": bool(res.get("is_adminer"))}
+    if res.get("_error") in (401, 422):
+        return None
+    # 403/网络类：若本地仍挂载了 Lsky 的 sqlite，退回到本地校验
+    local = _verify_lsky_user_local(email, password)
+    if local is not None:
+        return local
+    raise LskyUnavailable(res.get("detail") or "Lsky 校验接口不可用")
+
+
+def _verify_lsky_user_local(email: str, password: str) -> Optional[dict]:
+    """（兜底）读只读挂载的 Lsky users 表做 bcrypt 校验；未挂载则返回 None。"""
+    db_file = os.path.join(LSKY_STORAGE, "app", "lsky.sqlite") if LSKY_STORAGE else ""
+    if not db_file or not os.path.isfile(db_file) or not email or not password:
         return None
     try:
         src = sqlite3.connect(f"file:{db_file}?mode=ro", uri=True)
@@ -438,12 +495,18 @@ def login(req: LoginReq, request: Request):
 
 
 @app.post("/api/auth/login/user")
-def login_user(req: UserLoginReq):
-    """已注册人员 / 管理员：用 Lsky Pro 邮箱 + 密码登录。
+def login_user(req: UserLoginReq, request: Request):
+    """已注册人员 / 管理员：用 Lsky Pro 邮箱 + 密码登录（经 Lsky 的 /api/auth/verify 校验）。
     管理员(is_adminer) -> scope=full；其他已注册用户 -> scope=visitor。"""
-    u = verify_lsky_user(req.email, req.password)
+    _check_throttle(_client_ip(request))
+    try:
+        u = verify_lsky_user(req.email, req.password)
+    except LskyUnavailable as e:
+        raise HTTPException(status_code=503, detail=f"账号校验服务不可用：{e}")
     if not u:
+        _FAILS.setdefault(_client_ip(request), []).append(time.time())
         raise HTTPException(status_code=401, detail="邮箱或密码错误")
+    _FAILS.pop(_client_ip(request), None)
     if req.kind == "admin" and not u["is_adminer"]:
         raise HTTPException(status_code=403, detail="该账号不是管理员，请用「已注册人员登录」")
     scope = "full" if (req.kind == "admin" and u["is_adminer"]) else "visitor"
@@ -846,17 +909,47 @@ def is_video_name(name: str) -> bool:
     return name.lower().endswith(VIDEO_EXTS)
 
 
-def sync_from_lsky() -> tuple[int, int]:
-    db_file = os.path.join(LSKY_STORAGE, "app", "lsky.sqlite")
-    if not os.path.isfile(db_file):
-        raise HTTPException(status_code=500, detail=f"找不到 Lsky 数据库：{db_file}")
+def _lsky_image_rows() -> list[dict]:
+    """取 Lsky 图片元数据：优先经 Lsky HTTP 接口（零挂载），失败回落只读挂载的 sqlite。"""
+    detail = ""
+    try:
+        res = _lsky_api_call("/api/gallery/images", timeout=30)
+        rows = res.get("data")
+        if isinstance(rows, list):
+            return [
+                {
+                    "key": r.get("key") or "",
+                    "path": r.get("path") or "",
+                    "name": r.get("name") or "",
+                    "origin_name": r.get("origin_name"),
+                    "alias_name": r.get("alias_name"),
+                    "width": r.get("width"),
+                    "height": r.get("height"),
+                    "extension": r.get("extension") or "",
+                    "created_at": r.get("created_at"),
+                }
+                for r in rows
+                if isinstance(r, dict)
+            ]
+        detail = str(res.get("detail") or res.get("message") or "")
+    except LskyUnavailable as e:
+        detail = str(e)
+
+    db_file = os.path.join(LSKY_STORAGE, "app", "lsky.sqlite") if LSKY_STORAGE else ""
+    if not db_file or not os.path.isfile(db_file):
+        raise HTTPException(status_code=503, detail=f"Lsky 接口不可用（{detail or '未知原因'}）且未挂载数据库")
     src = sqlite3.connect(f"file:{db_file}?mode=ro", uri=True)
     src.row_factory = sqlite3.Row
-    rows = src.execute(
+    out = [dict(r) for r in src.execute(
         "SELECT path, name, origin_name, alias_name, md5, width, height, extension, key, created_at "
         "FROM images ORDER BY id DESC"
-    ).fetchall()
+    ).fetchall()]
     src.close()
+    return out
+
+
+def sync_from_lsky() -> tuple[int, int]:
+    rows = _lsky_image_rows()
 
     added = skipped = 0
     with db() as conn:

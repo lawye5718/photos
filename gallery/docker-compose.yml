@@ -16,10 +16,13 @@ services:
       TZ: Asia/Shanghai
       GALLERY_PORT: "8890"
       GALLERY_DATA: /app/data
-      # 仅挂载 Lsky 的 SQLite 文件：用于「邮箱+密码」登录校验（verify_lsky_user）。
-      # 媒体已全走 Lsky PHP 路由（HTTP），不再挂载 storage 目录——彻底摆脱软链/权限/迁移地狱。
-      LSKY_STORAGE: /lsky-storage
+      # 零挂载：媒体走 Lsky PHP 路由（HTTP），账号校验/同步走 Lsky 的 Gallery HTTP 接口，
+      # 不再挂载 Lsky 的任何目录或 sqlite 文件——彻底摆脱软链/权限/迁移地狱。
+      # 内网直连 Lsky 宿主端口（不绕公网/Cloudflare）；失败自动回落公网域名
+      LSKY_API_URL: http://192.168.0.107:8888
       LSKY_APP_URL: https://pic.damingxing.vip
+      # 与 Lsky 容器环境变量 GALLERY_VERIFY_SECRET 必须一致
+      LSKY_VERIFY_SECRET: "d1b9152a1c2eca51e77fba310a356f8e2919d91105514aa1"
       TOKEN_TTL: "604800"          # 长期口令签发的 token 有效期（7 天）
       # webhook 接收密钥（失败关闭）：调用方须在请求头 X-Gallery-Webhook-Key
       # 或 URL 参数 ?key= 携带相同值，否则 503/401 拒绝（修复「任何人可上传」）。
@@ -27,8 +30,8 @@ services:
 
     volumes:
       - ./data:/app/data
-      # 仅挂载 Lsky 的 SQLite（auth 用）；媒体走 Lsky PHP 路由，不再挂载 storage
-      - /volume1/docker/lsky/storage/app/lsky.sqlite:/lsky-storage/app/lsky.sqlite:ro
+      # 不再挂载 Lsky 的 storage / lsky.sqlite：账号校验经 /api/auth/verify、
+      # 同步经 /api/gallery/images，媒体经 Lsky PHP 路由，全部走 HTTP
 
     healthcheck:
       # 用首页探测：/api/* 需要令牌，urllib 遇 401 会直接抛异常，不适合做健康检查

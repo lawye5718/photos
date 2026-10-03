@@ -14,6 +14,10 @@ services:
 
     environment:
       TZ: Asia/Shanghai
+      # Gallery（光影收藏）专用接口的共享密钥：调用方须在请求头带 X-Gallery-Verify-Key。
+      # 未配置则 /api/auth/verify、/api/gallery/images 一律 403（失败关闭）。
+      # 与 gallery 容器的 LSKY_VERIFY_SECRET 必须一致
+      GALLERY_VERIFY_SECRET: "d1b9152a1c2eca51e77fba310a356f8e2919d91105514aa1"
 
     volumes:
       # 持久化：SQLite 库 + 上传的图片 + 日志 + 框架缓存（唯一需要备份的目录）
