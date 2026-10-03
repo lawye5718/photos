@@ -160,7 +160,13 @@ class ImageService
                 // 获取拓展名，判断是否需要转换
                 $format = $format ?: $extension;
                 $filename = Str::replaceLast($extension, $format, $file->getClientOriginalName());
-                $handleImage = InterventionImage::make($file)->save('tmp_' . md5_file($file->getRealPath()), $quality);
+                // 不能直接传原始上传临时路径给 Intervention：该文件仍属 is_uploaded_file 状态，Intervention 会尝试
+                // move_uploaded_file 到自身路径导致原文件消失而读失败；也不能传二进制（本环境 imagick 的 readImageBlob 异常）。
+                // 先把上传临时文件复制到一个稳定的普通临时文件，再用其路径交给 Intervention 处理（imagick 读普通文件路径正常）。
+                $stable = tempnam(sys_get_temp_dir(), 'lsky_') . '.' . $extension;
+                copy($file->getRealPath(), $stable);
+                $handleImage = InterventionImage::make($stable)->save('tmp_' . md5_file($file->getRealPath()), $quality);
+                @unlink($stable);
                 $file = new UploadedFile($handleImage->basePath(), $filename, $handleImage->mime());
                 // 重新设置拓展名
                 $extension = $format;
