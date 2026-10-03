@@ -50,7 +50,12 @@ RUN apk add --no-cache --virtual .build-deps \
 # 源码 + PHP 依赖
 COPY src/ /var/www/lsky
 WORKDIR /var/www/lsky
-RUN composer config repositories.packagist composer https://mirrors.aliyun.com/composer/ \
+# 群晖容器无法直接访问 GitHub（aws-sdk-php 等大包会超时）。构建时可传 --build-arg HTTP_PROXY/HTTPS_PROXY
+# 走本机 Clash 代理（如 http://192.168.0.112:7897）；不传则回退默认阿里云镜像。代理仅构建期生效，不写进镜像。
+ARG HTTP_PROXY
+ARG HTTPS_PROXY
+RUN export HTTP_PROXY="${HTTP_PROXY}" HTTPS_PROXY="${HTTPS_PROXY}" COMPOSER_PROCESS_TIMEOUT=0 \
+    && composer config repositories.packagist composer https://mirrors.aliyun.com/composer/ \
     && composer install --no-interaction --no-scripts --no-dev --optimize-autoloader
 
 # 移除 alpine 自带默认站，避免与我们的站点抢 80 端口默认站
