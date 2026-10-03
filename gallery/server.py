@@ -492,17 +492,18 @@ def media_file(media_id: int, payload: dict = Depends(require_token)):
     if row["category"] == "private" and payload.get("scope") != "full":
         raise HTTPException(status_code=403, detail="私密专区需要长期口令")
 
-    # 公开内容直接 302 到 Lsky 直链（省带宽、吃 CDN）
+    # 优先从挂载的 Lsky storage 直出真实文件（支持 Range，可拖动进度；
+    # Lsky 的 /i/... 直链已失效，故不再依赖外链）
+    path = local_file(row)
+    if path:
+        ctype = mimetypes.guess_type(path)[0] or ("video/mp4" if row["type"] == "video" else "image/jpeg")
+        return FileResponse(path, media_type=ctype,
+                            headers={"Referrer-Policy": "no-referrer",
+                                     "Cache-Control": "private, max-age=600"})
+    # 未挂载 storage 时的兜底：公开内容 302 到 Lsky 直链
     if row["category"] != "private":
         return RedirectResponse(row["url"], status_code=302)
-
-    # 私密内容：从挂载的 Lsky storage 流式读出
-    path = local_file(row)
-    if not path:
-        raise HTTPException(status_code=404, detail="私密文件不存在")
-    ctype = mimetypes.guess_type(path)[0] or ("video/mp4" if row["type"] == "video" else "image/jpeg")
-    return FileResponse(path, media_type=ctype,
-                        headers={"Referrer-Policy": "no-referrer", "Cache-Control": "private, max-age=600"})
+    raise HTTPException(status_code=404, detail="私密文件不存在")
 
 
 @app.get("/api/thumb/{media_id}")

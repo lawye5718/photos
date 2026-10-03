@@ -542,6 +542,11 @@ nav.tabs button.locked{color:var(--muted-2)}
     if (!url || url.indexOf("/api/") !== 0) return url;
     return url + (url.indexOf("?") >= 0 ? "&" : "?") + "t=" + encodeURIComponent(state.token);
   }
+  // 媒体统一走本服务的 /api/file/{id}（从只读挂载的 Lsky storage 出流，支持 Range 拖动），
+  // 避免直接引用已失效的 Lsky /i/... 直链；用 ?t= 携带令牌（<video>/<img> 无法带 header）
+  function fileUrl(id) {
+    return "/api/file/" + id + "?t=" + encodeURIComponent(state.token);
+  }
   let toastTimer;
   function toast(msg, ms = 2600) {
     const el = $("toast");
@@ -691,7 +696,7 @@ nav.tabs button.locked{color:var(--muted-2)}
   function cardHTML(item, idx) {
     const isVideo = item.type === "video";
     const media = isVideo
-      ? `<video class="media" src="${esc(withToken(item.url))}" muted loop playsinline preload="metadata"
+      ? `<video class="media" src="${esc(fileUrl(item.id))}" muted loop playsinline preload="metadata"
                 data-idx="${idx}" onmouseenter="this.play()" onmouseleave="this.pause()"></video>`
       : `<img class="media" src="${esc(withToken(item.thumbnail || item.url))}" alt="${esc(item.title)}"
               loading="lazy" decoding="async" referrerpolicy="no-referrer" data-idx="${idx}"
@@ -831,7 +836,7 @@ nav.tabs button.locked{color:var(--muted-2)}
     const item = state.lbList[state.lbIndex];
     if (!item) return;
     const body = item.type === "video"
-      ? `<video src="${esc(withToken(item.url))}" controls autoplay playsinline></video>`
+      ? `<video src="${esc(fileUrl(item.id))}" controls autoplay muted playsinline></video>`
       : bigImgHTML(item);
     const tags = String(item.tags || "").split(",").map((t) => t.trim()).filter(Boolean)
       .map((t) => `<span class="tag other">${esc(t)}</span>`).join("");
@@ -891,7 +896,7 @@ nav.tabs button.locked{color:var(--muted-2)}
     hoverTimer = setTimeout(() => {
       if (!item) return;
       const body = item.type === "video"
-        ? `<video src="${esc(withToken(item.url))}" autoplay muted loop playsinline></video>`
+        ? `<video src="${esc(fileUrl(item.id))}" autoplay muted loop playsinline></video>`
         : bigImgHTML(item);
       const tags = String(item.tags || "").split(",").map((t) => t.trim()).filter(Boolean)
         .map((t) => `<span class="tag other">${esc(t)}</span>`).join("");
