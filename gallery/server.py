@@ -37,6 +37,7 @@ import secrets
 import sqlite3
 import sys
 import time
+import bcrypt
 from contextlib import contextmanager
 from typing import Optional
 
@@ -185,6 +186,35 @@ def verify_password(password: str, stored: Optional[str]) -> bool:
         return False
 
 
+def verify_lsky_user(email: str, password: str) -> Optional[dict]:
+    """校验 Lsky Pro 账号（邮箱 + 密码），返回 {id, is_adminer} 或 None。
+    Lsky 密码是 Laravel bcrypt（$2y$ 前缀），Python bcrypt 用 $2a$ 等价校验。"""
+    db_file = os.path.join(LSKY_STORAGE, "app", "lsky.sqlite")
+    if not os.path.isfile(db_file) or not email or not password:
+        return None
+    try:
+        src = sqlite3.connect(f"file:{db_file}?mode=ro", uri=True)
+        src.row_factory = sqlite3.Row
+        row = src.execute(
+            "SELECT id, email, password, is_adminer FROM users WHERE LOWER(email) = ?",
+            (email.strip().lower(),),
+        ).fetchone()
+        src.close()
+    except Exception:
+        return None
+    if not row or not row["password"]:
+        return None
+    h = row["password"]
+    try:
+        if h.startswith("$2y$"):
+            h = "$2a$" + h[4:]
+        if bcrypt.checkpw(password.encode("utf-8"), h.encode("utf-8")):
+            return {"id": row["id"], "is_adminer": bool(row["is_adminer"])}
+    except Exception:
+        return None
+    return None
+
+
 def jwt_secret() -> str:
     return get_setting("jwt_secret") or ""
 
@@ -245,6 +275,12 @@ def require_full(payload: dict = Depends(require_token)) -> dict:
 # --------------------------------------------------------------------------- #
 class LoginReq(BaseModel):
     password: str
+
+
+class UserLoginReq(BaseModel):
+    email: str
+    password: str
+    kind: str = "user"   # admin | user
 
 
 class MediaPatch(BaseModel):
@@ -359,6 +395,21 @@ def login(req: LoginReq, request: Request):
 
     _FAILS.setdefault(ip, []).append(time.time())
     raise HTTPException(status_code=401, detail="口令错误")
+
+
+@app.post("/api/auth/login/user")
+def login_user(req: UserLoginReq):
+    """已注册人员 / 管理员：用 Lsky Pro 邮箱 + 密码登录。
+    管理员(is_adminer) -> scope=full；其他已注册用户 -> scope=visitor。"""
+    u = verify_lsky_user(req.email, req.password)
+    if not u:
+        raise HTTPException(status_code=401, detail="邮箱或密码错误")
+    if req.kind == "admin" and not u["is_adminer"]:
+        raise HTTPException(status_code=403, detail="该账号不是管理员，请用「已注册人员登录」")
+    scope = "full" if (req.kind == "admin" and u["is_adminer"]) else "visitor"
+    exp = int(time.time()) + TOKEN_TTL
+    return {"code": 200, "token": issue_token(scope, exp), "scope": scope,
+            "expires_at": exp, "label": "完整访问" if scope == "full" else "访客访问"}
 
 
 @app.get("/api/auth/me")

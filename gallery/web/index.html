@@ -96,7 +96,7 @@ body::before{
 .check input{accent-color:var(--accent);width:14px;height:14px;cursor:pointer}
 .gate-hint{margin-top:20px;font-size:12px;color:var(--muted-2);line-height:1.7;border-top:1px solid var(--line);padding-top:16px}
 /* 登录选项：默认隐藏，双击「管理入口」后显现 */
-.gate-login-tabs{display:flex;gap:8px;margin-top:22px}
+.gate-login-tabs{display:flex;flex-wrap:wrap;gap:8px;margin-top:22px}
 .gate-login-tabs button{flex:1;padding:10px 8px;border:1px solid var(--line-strong);background:rgba(0,0,0,.3);
   color:var(--muted);border-radius:12px;cursor:pointer;font-family:inherit;font-size:13.5px;white-space:nowrap;
   transition:color .18s,background .18s,border-color .18s}
@@ -361,9 +361,13 @@ nav.tabs button.locked{color:var(--muted-2)}
       <div class="gate-login-tabs">
         <button type="button" id="tabAdmin" class="active">管理员登录</button>
         <button type="button" id="tabUser">已注册人员登录</button>
+        <button type="button" id="tabGuest">访客口令</button>
+      </div>
+      <div class="field" id="emailField">
+        <input id="email" type="text" placeholder="Lsky 邮箱（如 yuanliang.law@outlook.com）" autocomplete="username" spellcheck="false">
       </div>
       <div class="field">
-        <input id="pwd" type="password" placeholder="请输入长期口令（管理员）" autocomplete="current-password" spellcheck="false">
+        <input id="pwd" type="password" placeholder="请输入 Lsky 密码（管理员）" autocomplete="current-password" spellcheck="false">
         <button class="eye" type="button" id="eye" tabindex="-1" title="显示/隐藏">👁</button>
       </div>
       <button class="btn-primary" id="gateBtn" type="submit">进入展馆</button>
@@ -374,7 +378,7 @@ nav.tabs button.locked{color:var(--muted-2)}
       <div class="gate-err" id="gateErr"></div>
     </div>
 
-    <div class="gate-hint" id="gateHint">双击右下角「管理入口」可唤起登录</div>
+    <div class="gate-hint" id="gateHint">双击右下角「管理入口」可唤起登录 · 管理员/已注册人员用 Lsky 邮箱+密码，外客用临时访客口令</div>
     <!-- 隐形管理入口：双击唤起登录选项 -->
     <div id="adminEntryHidden" title="管理入口（双击唤起登录）">管理入口</div>
   </form>
@@ -588,27 +592,41 @@ nav.tabs button.locked{color:var(--muted-2)}
 
   $("gateForm").addEventListener("submit", async (e) => {
     e.preventDefault();
+    const kind = state.loginKind;
     const pwd = $("pwd").value;
-    if (!pwd) return;
+    const email = ($("email").value || "").trim();
+    if (kind === "guest") {
+      if (!pwd) return;
+    } else if (!email || !pwd) {
+      $("gateErr").textContent = "请输入 Lsky 邮箱和密码";
+      return;
+    }
     const btn = $("gateBtn"); btn.disabled = true; btn.textContent = "验证中…";
     $("gateErr").textContent = "";
     try {
-      const res = await fetch("/api/auth/login", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ password: pwd }),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data.message || "口令错误");
-      // 登录选项强校验：管理员入口必须拿到 full，已注册人员入口必须拿到 visitor
-      if (state.loginKind === "admin" && data.scope !== "full") {
-        throw new Error("该口令不是「管理员(长期)口令」，请用管理员登录入口");
-      }
-      if (state.loginKind === "user" && data.scope !== "visitor") {
-        throw new Error("该口令不是「访客(限时)口令」，请用已注册人员登录入口");
+      let res, data;
+      if (kind === "guest") {
+        res = await fetch("/api/auth/login", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ password: pwd }),
+        });
+        data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.message || "口令错误");
+        if (data.scope !== "visitor") throw new Error("该口令不是「访客(限时)口令」，请用管理员登录入口");
+      } else {
+        res = await fetch("/api/auth/login/user", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ email, password: pwd, kind }),
+        });
+        data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.message || "邮箱或密码错误");
+        if (kind === "admin" && data.scope !== "full") throw new Error("该账号不是管理员");
+        if (kind === "user" && data.scope !== "visitor") throw new Error("登录失败");
       }
       saveToken(data.token, data.scope, $("remember").checked);
-      $("pwd").value = "";
+      $("pwd").value = ""; $("email").value = "";
       closeGate();
       toast(data.scope === "full" ? "欢迎回来 · 完整访问" : "已进入 · 访客访问");
       await boot();
@@ -1029,13 +1047,23 @@ nav.tabs button.locked{color:var(--muted-2)}
     state.loginKind = kind;
     $("tabAdmin").classList.toggle("active", kind === "admin");
     $("tabUser").classList.toggle("active", kind === "user");
-    $("pwd").placeholder = kind === "admin" ? "请输入长期口令（管理员）" : "请输入访客口令（限时）";
-    $("pwd").value = "";
+    $("tabGuest").classList.toggle("active", kind === "guest");
+    const isGuest = kind === "guest";
+    $("emailField").style.display = isGuest ? "none" : "block";
+    if (isGuest) {
+      $("pwd").placeholder = "请输入访客口令（限时，到期失效）";
+    } else if (kind === "admin") {
+      $("pwd").placeholder = "请输入 Lsky 密码（管理员）";
+    } else {
+      $("pwd").placeholder = "请输入 Lsky 密码";
+    }
+    $("pwd").value = ""; $("email").value = "";
     $("gateErr").textContent = "";
-    setTimeout(() => $("pwd").focus(), 30);
+    setTimeout(() => (isGuest ? $("pwd") : $("email")).focus(), 30);
   }
   $("tabAdmin").addEventListener("click", () => setLoginKind("admin"));
   $("tabUser").addEventListener("click", () => setLoginKind("user"));
+  $("tabGuest").addEventListener("click", () => setLoginKind("guest"));
 
   /* 隐形管理入口：双击唤起 / 收起登录选项 */
   $("adminEntryHidden").addEventListener("dblclick", () => {
