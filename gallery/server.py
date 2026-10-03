@@ -28,6 +28,7 @@ CLI
 from __future__ import annotations
 
 import hashlib
+import io
 import hmac
 import json
 import mimetypes
@@ -43,7 +44,9 @@ from typing import Optional
 
 import jwt
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
-from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, StreamingResponse
+import urllib.request
+import urllib.error
 from PIL import Image as PILImage, ImageOps
 from pydantic import BaseModel
 
@@ -79,15 +82,53 @@ os.makedirs(THUMB_DIR, exist_ok=True)
 os.makedirs(PREVIEW_DIR, exist_ok=True)
 
 
-def local_file(row: sqlite3.Row) -> Optional[str]:
-    """把 Lsky 的相对路径映射成本地绝对路径（要求挂载了 LSKY_STORAGE），并做目录穿越防护。"""
-    if not LSKY_STORAGE or not row["source_id"]:
+def lsky_source_bytes(row: sqlite3.Row) -> Optional[bytes]:
+    """经 Lsky 的 PHP 路由（{key}.{ext}）拉取原图字节，用于本地生成缩略图/预览。
+    不再依赖挂载的 storage 目录，全走 HTTP（契合内网穿透 + Cloudflare 边缘缓存）。"""
+    url = row["url"]
+    if not url or not re.match(r"^https?://", url or "", re.I):
         return None
-    base = os.path.realpath(os.path.join(LSKY_STORAGE, LSKY_UPLOAD_SUBDIR))
-    path = os.path.realpath(os.path.join(base, str(row["source_id"])))
-    if not path.startswith(base + os.sep) or not os.path.isfile(path):
+    try:
+        req = urllib.request.Request(url, headers={"User-Agent": "GalleryStudio/1.0"})
+        with urllib.request.urlopen(req, timeout=60) as resp:
+            return resp.read()
+    except Exception:
         return None
-    return path
+
+
+def proxy_lsky(row: sqlite3.Row, range_header: Optional[str]) -> "StreamingResponse":
+    """私密文件：服务端拉取 Lsky PHP 路由并流式转发（保留门禁），支持 Range 透传。"""
+    req = urllib.request.Request(row["url"])
+    if range_header:
+        req.add_header("Range", range_header)
+    try:
+        resp = urllib.request.urlopen(req, timeout=120)
+    except urllib.error.HTTPError as e:
+        raise HTTPException(status_code=e.code, detail="Lsky 返回错误")
+    except Exception:
+        raise HTTPException(status_code=502, detail="无法连接 Lsky")
+    headers = {
+        "Referrer-Policy": "no-referrer",
+        "Cache-Control": "private, max-age=600",
+        "Accept-Ranges": resp.headers.get("Accept-Ranges", "bytes"),
+        "Content-Type": resp.headers.get("Content-Type", "application/octet-stream"),
+    }
+    if resp.headers.get("Content-Length") is not None:
+        headers["Content-Length"] = resp.headers["Content-Length"]
+    if resp.headers.get("Content-Range") is not None:
+        headers["Content-Range"] = resp.headers["Content-Range"]
+
+    def gen():
+        try:
+            while True:
+                chunk = resp.read(65536)
+                if not chunk:
+                    break
+                yield chunk
+        finally:
+            resp.close()
+
+    return StreamingResponse(gen(), status_code=resp.status, headers=headers)
 
 # --------------------------------------------------------------------------- #
 # 数据库
@@ -322,19 +363,18 @@ app = FastAPI(title="Gallery Studio API", docs_url=None, redoc_url=None, openapi
 
 
 def _row_to_item(row: sqlite3.Row, scope: str) -> dict:
-    """私密内容不暴露 Lsky 直链，改走带鉴权的 /api/file/{id}；
-    缩略图统一走自建 /api/thumb/{id}（Lsky 未开启缩略图，原图 5MB 级，不能直接进瀑布流）。"""
+    """所有媒体统一走本服务的 /api/{file,thumb,preview}/{id}：
+    - 私密项：这些端点带门禁校验后，经 Lsky PHP 路由拉取/转发（直链不暴露给前端）；
+    - 公开/精选项：/api/file 302 到 Lsky PHP 路由（Cloudflare 缓存、零带宽），
+      /api/thumb、/api/preview 由本服务从 Lsky 拉原图后本地生成并缓存。
+    原 Lsky /i/... 静态直链（依赖 public/storage 软链）已废弃。"""
+    item_id = row["id"]
     is_private = row["category"] == "private"
-    has_local = bool(row["source_id"]) and bool(LSKY_STORAGE)
-    if is_private:
-        url = f"/api/file/{row['id']}"
-        thumb = f"/api/thumb/{row['id']}"
-    else:
-        url = row["url"]
-        thumb = f"/api/thumb/{row['id']}" if has_local else (row["thumbnail"] or row["url"])
-    preview = f"/api/preview/{row['id']}" if (has_local and row["type"] == "image") else url
+    url = f"/api/file/{item_id}"
+    thumb = f"/api/thumb/{item_id}"
+    preview = f"/api/preview/{item_id}" if row["type"] == "image" else url
     return {
-        "id": row["id"],
+        "id": item_id,
         "title": row["title"] or "",
         "type": row["type"],
         "url": url,
@@ -484,7 +524,7 @@ def list_media(
 
 
 @app.get("/api/file/{media_id}")
-def media_file(media_id: int, payload: dict = Depends(require_token)):
+def media_file(media_id: int, request: Request, payload: dict = Depends(require_token)):
     with db() as conn:
         row = conn.execute("SELECT * FROM media WHERE id = ?", (media_id,)).fetchone()
     if not row:
@@ -492,23 +532,16 @@ def media_file(media_id: int, payload: dict = Depends(require_token)):
     if row["category"] == "private" and payload.get("scope") != "full":
         raise HTTPException(status_code=403, detail="私密专区需要长期口令")
 
-    # 优先从挂载的 Lsky storage 直出真实文件（支持 Range，可拖动进度；
-    # Lsky 的 /i/... 直链已失效，故不再依赖外链）
-    path = local_file(row)
-    if path:
-        ctype = mimetypes.guess_type(path)[0] or ("video/mp4" if row["type"] == "video" else "image/jpeg")
-        return FileResponse(path, media_type=ctype,
-                            headers={"Referrer-Policy": "no-referrer",
-                                     "Cache-Control": "private, max-age=600"})
-    # 未挂载 storage 时的兜底：公开内容 302 到 Lsky 直链
-    if row["category"] != "private":
-        return RedirectResponse(row["url"], status_code=302)
-    raise HTTPException(status_code=404, detail="私密文件不存在")
+    # 公开/精选：302 到 Lsky PHP 路由（Cloudflare 边缘缓存、gallery 零带宽）
+    # 私密：服务端代理 Lsky PHP 路由并透传 Range（保留门禁，直链不落地前端）
+    if row["category"] == "private":
+        return proxy_lsky(row, request.headers.get("Range"))
+    return RedirectResponse(row["url"], status_code=302)
 
 
 @app.get("/api/thumb/{media_id}")
 def media_thumb(media_id: int, payload: dict = Depends(require_token)):
-    """自建缩略图：首访生成并落盘缓存，之后直出 JPEG。"""
+    """自建缩略图：首访从 Lsky PHP 路由拉原图生成并落盘缓存，之后直出 JPEG。"""
     with db() as conn:
         row = conn.execute("SELECT * FROM media WHERE id = ?", (media_id,)).fetchone()
     if not row:
@@ -520,15 +553,20 @@ def media_thumb(media_id: int, payload: dict = Depends(require_token)):
     if os.path.isfile(cached):
         return FileResponse(cached, media_type="image/jpeg", headers=THUMB_HEADERS)
 
-    src = local_file(row)
-    if row["category"] == "private" and not src:
-        raise HTTPException(status_code=404, detail="私密文件不存在")
-    fallback = row["thumbnail"] or row["url"]
-    if not src or row["type"] != "image" or src.lower().endswith(".svg"):
-        return RedirectResponse(fallback, status_code=302)
+    src = lsky_source_bytes(row)
+    # 私密：拉取失败直接 404（不泄露直链）；公开：回退原图
+    if not src:
+        if row["category"] == "private":
+            raise HTTPException(status_code=404, detail="私密文件不存在")
+        return RedirectResponse(row["url"], status_code=302)
+    # 非图片 / 动图(svg,gif)：私密代理、公开 302 到原图
+    if row["type"] != "image" or row["url"].lower().endswith((".svg", ".gif")):
+        if row["category"] == "private":
+            return proxy_lsky(row, None)
+        return RedirectResponse(row["url"], status_code=302)
 
     try:
-        with PILImage.open(src) as im:
+        with PILImage.open(io.BytesIO(src)) as im:
             im = ImageOps.exif_transpose(im).convert("RGB")
             if im.width > THUMB_WIDTH:
                 im = im.resize((THUMB_WIDTH, max(1, round(im.height * THUMB_WIDTH / im.width))), PILImage.LANCZOS)
@@ -537,7 +575,9 @@ def media_thumb(media_id: int, payload: dict = Depends(require_token)):
         os.replace(tmp, cached)
     except Exception:
         # 解码失败（损坏文件/不支持的格式）时退回原图，绝不让页面裂图
-        return RedirectResponse(fallback, status_code=302)
+        if row["category"] == "private":
+            return proxy_lsky(row, None)
+        return RedirectResponse(row["url"], status_code=302)
     return FileResponse(cached, media_type="image/jpeg", headers=THUMB_HEADERS)
 
 
@@ -555,12 +595,12 @@ def media_preview(media_id: int, payload: dict = Depends(require_token)):
     if os.path.isfile(cached):
         return FileResponse(cached, media_type="image/jpeg", headers=THUMB_HEADERS)
 
-    src = local_file(row)
-    if not src or row["type"] != "image" or src.lower().endswith((".svg", ".gif")):
-        return _original_response(row, src)
+    src = lsky_source_bytes(row)
+    if not src or row["type"] != "image" or row["url"].lower().endswith((".svg", ".gif")):
+        return _original_response(row)
 
     try:
-        with PILImage.open(src) as im:
+        with PILImage.open(io.BytesIO(src)) as im:
             im = ImageOps.exif_transpose(im)
             im = im.convert("RGB")
             if max(im.size) > PREVIEW_WIDTH:
@@ -569,16 +609,14 @@ def media_preview(media_id: int, payload: dict = Depends(require_token)):
             im.save(tmp, "JPEG", quality=PREVIEW_QUALITY, optimize=True, progressive=True)
         os.replace(tmp, cached)
     except Exception:
-        return _original_response(row, src)
+        return _original_response(row)
     return FileResponse(cached, media_type="image/jpeg", headers=THUMB_HEADERS)
 
 
-def _original_response(row: sqlite3.Row, src: Optional[str]):
-    if src:
-        ctype = mimetypes.guess_type(src)[0] or "image/jpeg"
-        return FileResponse(src, media_type=ctype, headers=THUMB_HEADERS)
+def _original_response(row: sqlite3.Row):
+    # 私密：代理 Lsky PHP 路由（保留门禁，直链不落地前端）；公开：302 到原图
     if row["category"] == "private":
-        raise HTTPException(status_code=404, detail="私密文件不存在")
+        return proxy_lsky(row, None)
     return RedirectResponse(row["url"], status_code=302)
 
 
@@ -786,13 +824,12 @@ async def lsky_webhook(request: Request):
             thumb = links.get("thumbnail_url") or it.get("thumbnail_url") or it.get("thumbnail") or url
             media_type = "video" if url.lower().split("?")[0].endswith(VIDEO_EXTS) else "image"
 
-            # 从直链 /i/<path> 反推 Lsky 相对路径，作为去重键（与 sync 一致）
-            m = re.search(r"/i/(.+?)(?:\?.*)?$", url)
-            sid = m.group(1) if m else None
-            if sid:
-                if conn.execute("SELECT 1 FROM media WHERE source_id = ?", (sid,)).fetchone():
-                    skipped += 1
-                    continue
+            # 去重键：规范化后的 PHP 路由 URL（同步与 webhook 共用，{key}.{ext}）
+            norm = url.split("?")[0].rstrip("/")
+            if conn.execute("SELECT 1 FROM media WHERE url = ?", (norm,)).fetchone():
+                skipped += 1
+                continue
+            sid = norm
 
             title = it.get("name") or it.get("origin_name") or it.get("alias_name") or "新上传素材"
             conn.execute(
@@ -816,7 +853,7 @@ def sync_from_lsky() -> tuple[int, int]:
     src = sqlite3.connect(f"file:{db_file}?mode=ro", uri=True)
     src.row_factory = sqlite3.Row
     rows = src.execute(
-        "SELECT path, name, origin_name, alias_name, md5, width, height, extension, created_at "
+        "SELECT path, name, origin_name, alias_name, md5, width, height, extension, key, created_at "
         "FROM images ORDER BY id DESC"
     ).fetchall()
     src.close()
@@ -835,10 +872,9 @@ def sync_from_lsky() -> tuple[int, int]:
                 skipped += 1
                 continue
             title = (r["alias_name"] or r["origin_name"] or r["name"] or "").strip() or None
-            url = f"{LSKY_APP_URL}/i/{pathname}"
-            # 缩略图文件名用的是图片自身 md5 列；未生成时会 404，前端已做回退
-            ext = "svg" if (r["extension"] == "svg") else "png"
-            thumb = f"{LSKY_APP_URL}/thumbnails/{r['md5']}.{ext}" if (r["md5"] and not is_video_name(pathname)) else url
+            # 原图统一走 Lsky PHP 路由（{key}.{extension}），不再用 /i/... 静态直链
+            url = f"{LSKY_APP_URL}/{r['key']}.{r['extension']}"
+            thumb = url  # 缩略图由 gallery 本地生成（/api/thumb），不依赖 Lsky 静态缩略图
             is_video = is_video_name(pathname)
             conn.execute(
                 "INSERT INTO media(title, type, url, thumbnail, category, is_featured, width, height, source, source_id, created_at) "

@@ -149,9 +149,9 @@ class Controller extends BaseController
             ->where('key', $request->route('key'))
             ->where('extension', strtolower($request->route('extension')))
             ->firstOr(fn() => abort(404));
-        if (! $image->group?->configs->get(GroupConfigKey::IsEnableOriginalProtection)) {
-            abort(404);
-        }
+
+        // 光影收藏改造：原图统一经此 PHP 路由流式输出，不再依赖「原图保护」开关，
+        // 也不再走 public/storage 软链直链——无论群晖怎么更新/Docker 怎么迁移都稳。
         try {
             $cacheKey = "image_{$image->key}";
 
@@ -198,8 +198,33 @@ class Controller extends BaseController
 
         out:
 
+        // 统一缓存头：immutable + 1 年，配合内网穿透 / Cloudflare 边缘缓存（首次回源后零带宽）。
+        $size = strlen($contents);
+        $status = 200;
+        $headers = [
+            'Content-Type' => $mimetype,
+            'Accept-Ranges' => 'bytes',
+            'Cache-Control' => 'public, max-age=31536000, immutable',
+        ];
+
+        // 支持 Range（视频拖动进度）。注意：原图已完整读入内存，这里只做切片返回。
+        $range = $request->header('Range');
+        if ($range && preg_match('/bytes=(\d+)-(\d*)/i', $range, $mm)) {
+            $start = (int)$mm[1];
+            $end = $mm[2] === '' ? $size - 1 : min((int)$mm[2], $size - 1);
+            if ($start > $end || $start >= $size) {
+                abort(416);
+            }
+            $status = 206;
+            $contents = substr($contents, $start, $end - $start + 1);
+            $headers['Content-Range'] = "bytes {$start}-{$end}/{$size}";
+            $headers['Content-Length'] = $end - $start + 1;
+        } else {
+            $headers['Content-Length'] = $size;
+        }
+
         return \response()->stream(function () use ($contents) {
             echo $contents;
-        }, headers: ['Content-type' => $mimetype]);
+        }, $status, $headers);
     }
 }

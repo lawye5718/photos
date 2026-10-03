@@ -16,10 +16,10 @@ services:
       TZ: Asia/Shanghai
       GALLERY_PORT: "8890"
       GALLERY_DATA: /app/data
-      # 只读挂载 Lsky Pro 的 storage：用于同步元数据 + 私密文件流式输出
+      # 仅挂载 Lsky 的 SQLite 文件：用于「邮箱+密码」登录校验（verify_lsky_user）。
+      # 媒体已全走 Lsky PHP 路由（HTTP），不再挂载 storage 目录——彻底摆脱软链/权限/迁移地狱。
       LSKY_STORAGE: /lsky-storage
       LSKY_APP_URL: https://pic.damingxing.vip
-      LSKY_UPLOAD_SUBDIR: app/uploads
       TOKEN_TTL: "604800"          # 长期口令签发的 token 有效期（7 天）
       # webhook 接收密钥（失败关闭）：调用方须在请求头 X-Gallery-Webhook-Key
       # 或 URL 参数 ?key= 携带相同值，否则 503/401 拒绝（修复「任何人可上传」）。
@@ -27,7 +27,8 @@ services:
 
     volumes:
       - ./data:/app/data
-      - /volume1/docker/lsky/storage:/lsky-storage:ro
+      # 仅挂载 Lsky 的 SQLite（auth 用）；媒体走 Lsky PHP 路由，不再挂载 storage
+      - /volume1/docker/lsky/storage/app/lsky.sqlite:/lsky-storage/app/lsky.sqlite:ro
 
     healthcheck:
       # 用首页探测：/api/* 需要令牌，urllib 遇 401 会直接抛异常，不适合做健康检查

@@ -172,14 +172,11 @@ class Image extends Model
     public function url(): Attribute
     {
         return new Attribute(function () {
-            // 是否启用原图保护功能
-            if ($this->group?->configs->get(GroupConfigKey::IsEnableOriginalProtection)) {
-                $url = asset("{$this->key}.{$this->extension}");
-            } else {
-                $url = rtrim($this->strategy?->configs->get('url'), '/').'/'.ltrim($this->pathname, '/');
-            }
+            // 光影收藏改造：原图一律经 PHP 路由（{key}.{extension}）流式输出，
+            // 废弃依赖 public/storage 软链的静态直链，url 不再随原图保护开关切换。
+            $url = asset("{$this->key}.{$this->extension}");
 
-            // 拼接图片 url
+            // 拼接图片 url（策略里可能带 query 参数）
             return $url.($this->strategy?->configs->get('queries') ?: '');
         });
     }
