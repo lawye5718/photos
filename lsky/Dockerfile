@@ -19,7 +19,7 @@ ENV TZ=Asia/Shanghai \
 # imagemagick 是 imagick 扩展的运行库（应用默认图片驱动就是 imagick，见 config/image.php）
 RUN sed -i 's|dl-cdn.alpinelinux.org|mirrors.aliyun.com|g' /etc/apk/repositories \
     && apk add --no-cache \
-        nginx supervisor tzdata su-exec unzip git imagemagick \
+        nginx supervisor tzdata su-exec unzip git imagemagick ffmpeg \
         libjpeg-turbo freetype libpng libwebp libwebp-tools libzip oniguruma libintl icu-libs sqlite-libs \
     && cp /usr/share/zoneinfo/Asia/Shanghai /etc/localtime \
     && echo "Asia/Shanghai" > /etc/timezone

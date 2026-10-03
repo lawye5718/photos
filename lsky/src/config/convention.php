@@ -45,7 +45,7 @@ return [
         ],
     ],
     'group' => [
-        GroupConfigKey::MaximumFileSize => 5120,
+        GroupConfigKey::MaximumFileSize => 512000, // 500MB，兼容手机视频（php-custom.ini 已放开到 1G）
         GroupConfigKey::ConcurrentUploadNum => 3,
         GroupConfigKey::IsEnableScan => 0,
         GroupConfigKey::IsEnableWatermark => 0,
@@ -106,7 +106,7 @@ return [
         GroupConfigKey::LimitPerDay => 300,
         GroupConfigKey::LimitPerWeek => 600,
         GroupConfigKey::LimitPerMonth => 999,
-        GroupConfigKey::AcceptedFileSuffixes => ['jpeg', 'jpg', 'png', 'gif', 'tif', 'bmp', 'ico', 'psd', 'webp', 'svg'],
+        GroupConfigKey::AcceptedFileSuffixes => ['jpeg', 'jpg', 'png', 'gif', 'tif', 'bmp', 'ico', 'psd', 'webp', 'svg', 'mp4', 'mov', 'avi', 'mkv', 'webm', 'm4v', 'mpg', 'mpeg', 'flv', 'wmv', '3gp', 'ogv', 'ts', 'm2ts', 'mts'],
         GroupConfigKey::ImageSaveFormat => '',
         GroupConfigKey::ImageSaveQuality => 75,
         GroupConfigKey::PathNamingRule => '{Y}/{m}/{d}',

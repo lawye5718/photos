@@ -266,10 +266,8 @@ class ImageService
             }
         }
 
-        // 视频无法生成图片缩略图，直接跳过
-        if (! in_array($extension, ['mp4', 'mov', 'avi', 'mkv', 'webm', 'm4v', 'mpg', 'mpeg', 'flv', 'wmv', '3gp', 'ogv', 'ts', 'm2ts', 'mts'])) {
-            $this->makeThumbnail($image, $file);
-        }
+        // 生成缩略图（图片走 Intervention，视频走 ffmpeg 抽首帧；任一种失败都静默跳过，不影响上传）
+        $this->makeThumbnail($image, $file);
 
         // 上传完成后删除临时文件
         unlink($file->getPathname());
@@ -560,29 +558,65 @@ class ImageService
                     @mkdir(dirname($pathname));
                 }
 
-                // 生成缩略图，svg等格式本身体积足够小且网页原生支持(比生成的png缩略图还小)，不用生成缩略图，直接复制文件
-                if($image->extension ==='svg') {
-                    copy($data->getPathname(), $pathname);
-                }else{
-                    @ini_set('memory_limit', '512M');
+                $videoExts = ['mp4', 'mov', 'avi', 'mkv', 'webm', 'm4v', 'mpg', 'mpeg', 'flv', 'wmv', '3gp', 'ogv', 'ts', 'm2ts', 'mts'];
 
-                    $img = InterventionImage::make($data);
-
-                    $width = $w = $image->width;
-                    $height = $h = $image->height;
-
-                    if ($w > $max && $h > $max) {
-                        $scale = min($max / $w, $max / $h);
-                        $width  = (int)($w * $scale);
-                        $height = (int)($h * $scale);
-                    }
-
-                    $img->fit($width, $height, fn($constraint) => $constraint->upsize())->encode('png', 60)->save($pathname);
-                    $img->destroy();
+                // 视频：用 ffmpeg 抽首帧作为缩略图（无 ffmpeg 或失败时静默跳过，不影响上传）
+                if (in_array($image->extension, $videoExts, true)) {
+                    $this->makeVideoThumbnail($data->getPathname(), $pathname, $max);
+                    return;
                 }
+
+                // svg 等格式本身体积足够小且网页原生支持，直接复制文件
+                if ($image->extension === 'svg') {
+                    copy($data->getPathname(), $pathname);
+                    return;
+                }
+
+                @ini_set('memory_limit', '512M');
+
+                $img = InterventionImage::make($data);
+
+                $width = $w = $image->width;
+                $height = $h = $image->height;
+
+                if ($w > $max && $h > $max) {
+                    $scale = min($max / $w, $max / $h);
+                    $width  = (int)($w * $scale);
+                    $height = (int)($h * $scale);
+                }
+
+                $img->fit($width, $height, fn($constraint) => $constraint->upsize())->encode('png', 60)->save($pathname);
+                $img->destroy();
             } catch (\Throwable $e) {
                 Utils::e($e, '生成缩略图时出现异常');
             }
+        }
+    }
+
+    /**
+     * 用 ffmpeg 抽取视频首帧生成 PNG 缩略图
+     *
+     * @param  string  $src  源视频路径
+     * @param  string  $dst  目标 PNG 路径
+     * @param  int  $max  最大宽高
+     * @throws \Throwable
+     */
+    protected function makeVideoThumbnail(string $src, string $dst, int $max): void
+    {
+        $ffmpeg = trim((string) @shell_exec('command -v ffmpeg 2>/dev/null'));
+        if ($ffmpeg === '') {
+            throw new \RuntimeException('未找到 ffmpeg，无法生成视频缩略图');
+        }
+
+        // 取第 1 秒关键帧；宽度不超过 $max，高度等比（-2 保证偶数）
+        $filter = "scale='min({$max},iw)':-2";
+        $cmd = $ffmpeg.' -y -ss 1 -i '.escapeshellarg($src)
+            .' -vframes 1 -vf '.escapeshellarg($filter).' '.escapeshellarg($dst).' 2>&1';
+
+        @exec($cmd, $output, $code);
+
+        if ($code !== 0 || ! is_file($dst)) {
+            throw new \RuntimeException('ffmpeg 抽帧失败：'.implode("\n", array_slice($output, -5)));
         }
     }
 
