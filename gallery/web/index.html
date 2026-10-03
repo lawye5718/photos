@@ -2,7 +2,7 @@
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, maximum-scale=5.0">
 <meta name="referrer" content="no-referrer">
 <title>Studio · 光影收藏</title>
 <style>
@@ -32,6 +32,7 @@ body{
   -webkit-font-smoothing:antialiased;
   letter-spacing:.01em;
   min-height:100vh;
+  min-height:100dvh;
   overflow-x:hidden;
 }
 /* 背景光晕：沉浸感来源 */
@@ -296,6 +297,38 @@ nav.tabs button.locked{color:var(--muted-2)}
 .editor-actions .cancel{background:var(--surface-2);color:var(--muted)}
 .editor-actions .save{background:linear-gradient(135deg,var(--accent),#5eead4);color:#04140d}
 .editor-err{color:#f87171;font-size:13px;margin:-6px 0 12px;min-height:16px}
+
+/* ===================== 管理入口（长期口令可见） ===================== */
+.admin-entry{
+  border:1px solid var(--line-strong);background:rgba(20,22,27,.9);color:#fff;border-radius:12px;
+  padding:8px 14px;font-size:13px;cursor:pointer;font-family:inherit;white-space:nowrap;
+  margin-left:auto;transition:background .2s,transform .18s var(--ease),border-color .2s;
+}
+.admin-entry:hover{background:rgba(255,255,255,.14)}
+.admin-entry.active{background:linear-gradient(135deg,var(--accent),#5eead4);color:#04140d;border-color:transparent}
+
+/* ===================== 移动端适配 ===================== */
+@media (max-width:640px){
+  .wrap{padding:0 14px 64px}
+  header.top{padding:12px 14px;gap:10px;flex-wrap:wrap}
+  .brand small{display:none}
+  nav.tabs{order:3;width:100%;margin-left:0;flex-wrap:nowrap;overflow-x:auto;
+    -webkit-overflow-scrolling:touch;justify-content:flex-start}
+  nav.tabs button{flex:0 0 auto}
+  .chip{order:2}
+  .admin-entry{order:2;margin-left:0;padding:7px 12px}
+  #app{min-height:100dvh}
+  /* 灯箱在手机上满屏、去边距 */
+  .lb{padding:0}
+  .lb-stage{width:100%;height:100%;justify-content:center}
+  .lb-stage img,.lb-stage video{max-width:100vw;max-height:100dvh}
+  .lb-nav.prev{left:calc(8px + env(safe-area-inset-left))}
+  .lb-nav.next{right:calc(8px + env(safe-area-inset-right))}
+  .lb-close{top:calc(12px + env(safe-area-inset-top));right:calc(12px + env(safe-area-inset-right))}
+  .admin-bar{right:12px;bottom:calc(12px + env(safe-area-inset-bottom))}
+  /* 隐藏悬停出列层（移动端无鼠标） */
+  #hoverLayer{display:none !important}
+}
 </style>
 </head>
 <body>
@@ -330,6 +363,7 @@ nav.tabs button.locked{color:var(--muted-2)}
       </div>
       <nav class="tabs" id="tabs"></nav>
       <div class="chip" id="chip"><span class="lv"></span><span id="chipText">—</span><button id="logout" title="退出">退出</button></div>
+      <button class="admin-entry" id="adminEntry" style="display:none" title="管理展馆（需长期口令）">🔧 管理</button>
     </header>
 
     <div class="section-head">
@@ -411,6 +445,7 @@ nav.tabs button.locked{color:var(--muted-2)}
     <label>新口令（留空 = 随机生成，至少 6 位）</label>
     <input id="pwNew" type="text" autocomplete="off">
     <div class="pw-result" id="pwResult"></div>
+    <button class="btn-primary" id="pwCopy" style="display:none;margin-top:10px">📋 复制 / 发送口令</button>
     <div class="editor-err" id="pwErr"></div>
     <div class="editor-actions">
       <button class="danger" id="pwRevoke">停用限时口令</button>
@@ -589,6 +624,9 @@ nav.tabs button.locked{color:var(--muted-2)}
     const chip = $("chip");
     chip.classList.toggle("visitor", state.scope !== "full");
     $("chipText").textContent = state.scope === "full" ? "完整访问" : "访客访问";
+    // 仅长期口令可见「管理」入口（可见即代表拥有管理权限）
+    $("adminEntry").style.display = state.scope === "full" ? "inline-block" : "none";
+    $("adminEntry").classList.toggle("active", state.isAdminMode);
   }
 
   /* ------------------------------ 列表 ------------------------------ */
@@ -773,6 +811,26 @@ nav.tabs button.locked{color:var(--muted-2)}
     if (e.key === "ArrowRight") step(1);
   });
 
+  /* ------------------------------ 移动端：灯箱手势 ------------------------------ */
+  // 左右滑动翻页；向下滑动（或点击背景）关闭；向上滑动忽略，避免误触。
+  (() => {
+    const lb = $("lightbox");
+    let sx = 0, sy = 0, tracking = false;
+    lb.addEventListener("touchstart", (e) => {
+      if (e.touches.length !== 1) { tracking = false; return; }
+      const t = e.touches[0]; sx = t.clientX; sy = t.clientY; tracking = true;
+    }, { passive: true });
+    lb.addEventListener("touchend", (e) => {
+      if (!tracking) return; tracking = false;
+      const t = e.changedTouches[0];
+      const dx = t.clientX - sx, dy = t.clientY - sy;
+      const ax = Math.abs(dx), ay = Math.abs(dy);
+      if (ax < 28 && ay < 28) return;           // 视作点击，交给 click 处理
+      if (ay > ax) { if (dy > 0) closeLightbox(); }   // 下滑关闭
+      else { step(dx < 0 ? 1 : -1); }            // 左滑下一张 / 右滑上一张
+    }, { passive: true });
+  })();
+
   /* ------------------------------ 悬停出列（90%） ------------------------------ */
   let hoverTimer = null;
   function showHover(item) {
@@ -804,6 +862,7 @@ nav.tabs button.locked{color:var(--muted-2)}
     }
     state.isAdminMode = !state.isAdminMode;
     $("adminBar").classList.toggle("show", state.isAdminMode);
+    $("adminEntry").classList.toggle("active", state.isAdminMode);
     toast(state.isAdminMode ? "管理模式：开（点击卡片 ⚙️ 编辑 / 删除）" : "管理模式：关");
     grid.innerHTML = state.items.map(cardHTML).join("");
     bindCards();
@@ -890,20 +949,32 @@ nav.tabs button.locked{color:var(--muted-2)}
     $("pwdPanel").style.display = "flex"; $("pwErr").textContent = ""; $("pwResult").style.display = "none";
     refreshPwdStatus();
   });
-  $("pwClose").addEventListener("click", () => { $("pwdPanel").style.display = "none"; $("pwCurrent").value = ""; $("pwNew").value = ""; });
+  $("pwClose").addEventListener("click", () => { $("pwdPanel").style.display = "none"; $("pwCurrent").value = ""; $("pwNew").value = ""; $("pwResult").style.display = "none"; $("pwCopy").style.display = "none"; });
   $("pwSave").addEventListener("click", async () => {
-    $("pwErr").textContent = ""; $("pwResult").style.display = "none";
+    $("pwErr").textContent = ""; $("pwResult").style.display = "none"; $("pwCopy").style.display = "none";
     const kind = $("pwKind").value;
     try {
       const r = await api("/api/admin/password", { method: "POST", body: JSON.stringify({
         current_password: $("pwCurrent").value, kind, new_password: $("pwNew").value,
         days: parseFloat($("pwDays").value) || 7 }) });
       if (r.token) saveToken(r.token, r.scope, !!localStorage.getItem("gallery_token"));
-      if (r.generated) { $("pwResult").textContent = r.password; $("pwResult").style.display = "block"; }
+      if (r.generated) { $("pwResult").textContent = r.password; $("pwResult").style.display = "block"; $("pwCopy").style.display = "block"; }
       $("pwNew").value = ""; $("pwCurrent").value = "";
       toast(r.message || "已更新", 4000);
       refreshPwdStatus();
     } catch (err) { $("pwErr").textContent = err.message || "失败"; }
+  });
+  $("pwCopy").addEventListener("click", async () => {
+    const txt = $("pwResult").textContent || "";
+    if (!txt) return;
+    try {
+      if (navigator.share) { await navigator.share({ title: "光影展馆临时口令", text: "光影展馆访客口令：" + txt }); return; }
+      await navigator.clipboard.writeText(txt);
+      toast("已复制到剪贴板，去粘贴发送给访客", 3500);
+    } catch (e) {
+      try { await navigator.clipboard.writeText(txt); toast("已复制", 2500); }
+      catch (_) { toast("复制失败，请长按上方口令手动选择", 3500); }
+    }
   });
   $("pwRevoke").addEventListener("click", async () => {
     if (!confirm("停用限时口令并让所有访客令牌失效？")) return;
@@ -920,6 +991,7 @@ nav.tabs button.locked{color:var(--muted-2)}
   });
 
   document.querySelector(".brand").addEventListener("dblclick", toggleAdmin);
+  $("adminEntry").addEventListener("click", toggleAdmin);
   $("edCancel").addEventListener("click", closeEditor);
   $("edSave").addEventListener("click", saveEdit);
   $("editor").addEventListener("click", (e) => { if (e.target.id === "editor") closeEditor(); });
