@@ -266,7 +266,10 @@ class ImageService
             }
         }
 
-        $this->makeThumbnail($image, $file);
+        // 视频无法生成图片缩略图，直接跳过
+        if (! in_array($extension, ['mp4', 'mov', 'avi', 'mkv', 'webm', 'm4v', 'mpg', 'mpeg', 'flv', 'wmv', '3gp', 'ogv', 'ts', 'm2ts', 'mts'])) {
+            $this->makeThumbnail($image, $file);
+        }
 
         // 上传完成后删除临时文件
         unlink($file->getPathname());
