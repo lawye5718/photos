@@ -95,6 +95,22 @@ body::before{
 .check{display:flex;align-items:center;gap:7px;cursor:pointer;user-select:none}
 .check input{accent-color:var(--accent);width:14px;height:14px;cursor:pointer}
 .gate-hint{margin-top:20px;font-size:12px;color:var(--muted-2);line-height:1.7;border-top:1px solid var(--line);padding-top:16px}
+/* 登录选项：默认隐藏，双击「管理入口」后显现 */
+.gate-login-tabs{display:flex;gap:8px;margin-top:22px}
+.gate-login-tabs button{flex:1;padding:10px 8px;border:1px solid var(--line-strong);background:rgba(0,0,0,.3);
+  color:var(--muted);border-radius:12px;cursor:pointer;font-family:inherit;font-size:13.5px;white-space:nowrap;
+  transition:color .18s,background .18s,border-color .18s}
+.gate-login-tabs button.active{color:#04140d;font-weight:620;
+  background:linear-gradient(135deg,var(--accent),#5eead4);border-color:transparent;
+  box-shadow:0 8px 20px -10px rgba(52,211,153,.7)}
+.gate-login-tabs button:hover:not(.active){color:var(--text);background:var(--surface-2)}
+/* 隐形管理入口：极淡，双击唤起登录选项 */
+.admin-entry-hidden{
+  position:fixed;right:12px;bottom:12px;z-index:130;
+  font-size:11px;letter-spacing:.12em;color:var(--muted-2);opacity:.05;
+  user-select:none;cursor:default;pointer-events:auto;
+}
+.admin-entry-hidden:hover{opacity:.12}
 .gate-err{color:#f87171;font-size:13px;margin-top:14px;min-height:18px}
 .shake{animation:shake .4s}
 @keyframes shake{10%,90%{transform:translateX(-2px)}20%,80%{transform:translateX(4px)}30%,50%,70%{transform:translateX(-7px)}40%,60%{transform:translateX(7px)}}
@@ -338,18 +354,29 @@ nav.tabs button.locked{color:var(--muted-2)}
   <form class="gate-card" id="gateForm" autocomplete="off">
     <div class="gate-mark">◈</div>
     <div class="gate-title">光影收藏 · 私人展馆</div>
-    <div class="gate-sub" id="gateSub">此展馆仅限受邀者进入<br>请输入访问口令</div>
-    <div class="field">
-      <input id="pwd" type="password" placeholder="访问口令" autocomplete="current-password" spellcheck="false">
-      <button class="eye" type="button" id="eye" tabindex="-1" title="显示/隐藏">👁</button>
+    <div class="gate-sub" id="gateSub">此展馆仅限受邀者进入</div>
+
+    <!-- 登录选项：默认隐藏，双击右下角「管理入口」后显现 -->
+    <div id="loginOptions" style="display:none">
+      <div class="gate-login-tabs">
+        <button type="button" id="tabAdmin" class="active">管理员登录</button>
+        <button type="button" id="tabUser">已注册人员登录</button>
+      </div>
+      <div class="field">
+        <input id="pwd" type="password" placeholder="请输入长期口令（管理员）" autocomplete="current-password" spellcheck="false">
+        <button class="eye" type="button" id="eye" tabindex="-1" title="显示/隐藏">👁</button>
+      </div>
+      <button class="btn-primary" id="gateBtn" type="submit">进入展馆</button>
+      <div class="gate-row">
+        <label class="check"><input type="checkbox" id="remember"> 保持登录状态</label>
+        <span id="gateMode"></span>
+      </div>
+      <div class="gate-err" id="gateErr"></div>
     </div>
-    <button class="btn-primary" id="gateBtn" type="submit">进入展馆</button>
-    <div class="gate-row">
-      <label class="check"><input type="checkbox" id="remember"> 保持登录状态</label>
-      <span id="gateMode"></span>
-    </div>
-    <div class="gate-err" id="gateErr"></div>
-    <div class="gate-hint">长期口令可浏览全部内容（含私密专区）；限时口令仅可浏览公开分类，到期自动失效。</div>
+
+    <div class="gate-hint" id="gateHint">双击右下角「管理入口」可唤起登录</div>
+    <!-- 隐形管理入口：双击唤起登录选项 -->
+    <div id="adminEntryHidden" title="管理入口（双击唤起登录）">管理入口</div>
   </form>
 </div>
 
@@ -363,7 +390,6 @@ nav.tabs button.locked{color:var(--muted-2)}
       </div>
       <nav class="tabs" id="tabs"></nav>
       <div class="chip" id="chip"><span class="lv"></span><span id="chipText">—</span><button id="logout" title="退出">退出</button></div>
-      <button class="admin-entry" id="adminEntry" style="display:none" title="管理展馆（需长期口令）">🔧 管理</button>
     </header>
 
     <div class="section-head">
@@ -438,8 +464,8 @@ nav.tabs button.locked{color:var(--muted-2)}
         <select id="pwKind"><option value="perm">长期口令</option><option value="temp">限时口令（访客）</option></select>
       </div>
       <div>
-        <label>有效天数（仅限时）</label>
-        <input id="pwDays" type="number" min="1" max="365" value="7">
+        <label>有效天数（仅限时，默认 1 天 = 24 小时）</label>
+        <input id="pwDays" type="number" min="1" max="365" value="1">
       </div>
     </div>
     <label>新口令（留空 = 随机生成，至少 6 位）</label>
@@ -486,6 +512,7 @@ nav.tabs button.locked{color:var(--muted-2)}
     lbIndex: 0,
     isAdminMode: false,
     editingItem: null,
+    loginKind: "admin",   // admin=管理员登录(长期口令) | user=已注册人员登录(限时口令)
   };
 
   const $ = (id) => document.getElementById(id);
@@ -543,8 +570,10 @@ nav.tabs button.locked{color:var(--muted-2)}
     app.classList.add("hidden");
     $("gateErr").textContent = "";
     $("gateMode").textContent = "";
-    $("gateSub").innerHTML = reason ? esc(reason) : "此展馆仅限受邀者进入<br>请输入访问口令";
-    setTimeout(() => $("pwd").focus(), 60);
+    $("gateSub").innerHTML = reason ? esc(reason) : "此展馆仅限受邀者进入";
+    // 登录选项默认隐藏，需双击「管理入口」唤起
+    $("loginOptions").style.display = "none";
+    setLoginKind("admin");
   }
   function closeGate() {
     gate.classList.add("hidden");
@@ -571,6 +600,13 @@ nav.tabs button.locked{color:var(--muted-2)}
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.message || "口令错误");
+      // 登录选项强校验：管理员入口必须拿到 full，已注册人员入口必须拿到 visitor
+      if (state.loginKind === "admin" && data.scope !== "full") {
+        throw new Error("该口令不是「管理员(长期)口令」，请用管理员登录入口");
+      }
+      if (state.loginKind === "user" && data.scope !== "visitor") {
+        throw new Error("该口令不是「访客(限时)口令」，请用已注册人员登录入口");
+      }
       saveToken(data.token, data.scope, $("remember").checked);
       $("pwd").value = "";
       closeGate();
@@ -624,9 +660,6 @@ nav.tabs button.locked{color:var(--muted-2)}
     const chip = $("chip");
     chip.classList.toggle("visitor", state.scope !== "full");
     $("chipText").textContent = state.scope === "full" ? "完整访问" : "访客访问";
-    // 仅长期口令可见「管理」入口（可见即代表拥有管理权限）
-    $("adminEntry").style.display = state.scope === "full" ? "inline-block" : "none";
-    $("adminEntry").classList.toggle("active", state.isAdminMode);
   }
 
   /* ------------------------------ 列表 ------------------------------ */
@@ -862,7 +895,6 @@ nav.tabs button.locked{color:var(--muted-2)}
     }
     state.isAdminMode = !state.isAdminMode;
     $("adminBar").classList.toggle("show", state.isAdminMode);
-    $("adminEntry").classList.toggle("active", state.isAdminMode);
     toast(state.isAdminMode ? "管理模式：开（点击卡片 ⚙️ 编辑 / 删除）" : "管理模式：关");
     grid.innerHTML = state.items.map(cardHTML).join("");
     bindCards();
@@ -956,7 +988,7 @@ nav.tabs button.locked{color:var(--muted-2)}
     try {
       const r = await api("/api/admin/password", { method: "POST", body: JSON.stringify({
         current_password: $("pwCurrent").value, kind, new_password: $("pwNew").value,
-        days: parseFloat($("pwDays").value) || 7 }) });
+        days: parseFloat($("pwDays").value) || 1 }) });
       if (r.token) saveToken(r.token, r.scope, !!localStorage.getItem("gallery_token"));
       if (r.generated) { $("pwResult").textContent = r.password; $("pwResult").style.display = "block"; $("pwCopy").style.display = "block"; }
       $("pwNew").value = ""; $("pwCurrent").value = "";
@@ -991,7 +1023,27 @@ nav.tabs button.locked{color:var(--muted-2)}
   });
 
   document.querySelector(".brand").addEventListener("dblclick", toggleAdmin);
-  $("adminEntry").addEventListener("click", toggleAdmin);
+
+  /* 双登录选项：管理员 / 已注册人员，运行时按 scope 强校验 */
+  function setLoginKind(kind) {
+    state.loginKind = kind;
+    $("tabAdmin").classList.toggle("active", kind === "admin");
+    $("tabUser").classList.toggle("active", kind === "user");
+    $("pwd").placeholder = kind === "admin" ? "请输入长期口令（管理员）" : "请输入访客口令（限时）";
+    $("pwd").value = "";
+    $("gateErr").textContent = "";
+    setTimeout(() => $("pwd").focus(), 30);
+  }
+  $("tabAdmin").addEventListener("click", () => setLoginKind("admin"));
+  $("tabUser").addEventListener("click", () => setLoginKind("user"));
+
+  /* 隐形管理入口：双击唤起 / 收起登录选项 */
+  $("adminEntryHidden").addEventListener("dblclick", () => {
+    const box = $("loginOptions");
+    box.style.display = box.style.display === "none" ? "block" : "none";
+    if (box.style.display === "block") setLoginKind(state.loginKind);
+  });
+
   $("edCancel").addEventListener("click", closeEditor);
   $("edSave").addEventListener("click", saveEdit);
   $("editor").addEventListener("click", (e) => { if (e.target.id === "editor") closeEditor(); });

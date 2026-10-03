@@ -259,7 +259,7 @@ class PasswordChange(BaseModel):
     current_password: str
     kind: str = "perm"                  # perm 长期口令 | temp 限时口令
     new_password: Optional[str] = None  # 留空则随机生成
-    days: float = 7                     # 仅限时口令使用
+    days: float = 1                     # 仅限时口令使用，默认 24 小时
 
 
 class BulkReq(BaseModel):
@@ -851,14 +851,18 @@ def cli_revoke() -> None:
 
 def cli_settemp(password: str, days: float) -> None:
     _need_valid(password)
+    if not 0 < days <= 365:
+        print("❌ 有效天数需在 0~365 之间"); sys.exit(1)
     bump_token_version("visitor")
     exp = int(time.time() + days * 86400)
     set_setting("temp_hash", hash_password(password))
     set_setting("temp_expires_at", str(exp))
-    print(f"✅ 限时口令已设置，将于 {time.strftime('%Y-%m-%d %H:%M', time.localtime(exp))} 失效")
+    print(f"✅ 限时口令已设置，将于 {time.strftime('%Y-%m-%d %H:%M', time.localtime(exp))} 失效（{days} 天）")
 
 
 def cli_rotate(days: float) -> None:
+    if not 0 < days <= 365:
+        print("❌ 有效天数需在 0~365 之间"); sys.exit(1)
     pwd = secrets.token_urlsafe(9)
     exp = int(time.time() + days * 86400)
     bump_token_version("visitor")
@@ -919,9 +923,9 @@ def main(argv: list[str]) -> None:
     elif cmd == "setperm" and args:
         cli_setperm(args[0])
     elif cmd == "settemp" and args:
-        cli_settemp(args[0], float(opt("--days", 7)))
+        cli_settemp(args[0], float(opt("--days", 1)))
     elif cmd == "rotate":
-        cli_rotate(float(opt("--days", 7)))
+        cli_rotate(float(opt("--days", 1)))
     elif cmd == "genperm":
         cli_genperm()
     elif cmd == "revoke":
